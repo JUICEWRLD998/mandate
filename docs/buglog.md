@@ -51,8 +51,9 @@ error: could not compile `zmij` (build script) due to 1 previous error
 ```
 - Reproduction: clean clone of z-tenant-flight on this host, `cargo build --target wasm32-wasip2 --release` → exit 101. Build scripts (proc-macro2/serde_core/quote/zmij) compile for the HOST, so they need a native linker; PATH resolves `link.exe` to git-bash's GNU coreutils `link` (a hardlink tool, accepts exactly 2 operands → "extra operand").
 - Severity: high (blocks every native and wasm cargo build until fixed)
-- Status: open
+- Status: resolved (workaround applied 2026-09-01)
 - Suggested fix: install the MSVC C++ build tools (`winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --norestart"`) so the real `link.exe` (and Windows SDK libs) are on PATH for Rust; or use a GNU toolchain with mingw gcc.
+- Workaround applied: rustup GNU toolchain (`stable-x86_64-pc-windows-gnu`) + portable MinGW-w64 gcc 16.2.0 (winlibs, C:\Users\fadhm\mingw64), pinned via `~/.cargo/config.toml` (`[target.x86_64-pc-windows-gnu] linker = "C:/Users/fadhm/mingw64/mingw64/bin/gcc.exe"`). `cargo build --target wasm32-wasip2 --release` on z-tenant-flight v0.4.1 → **Finished in 1m 34s, exit 0** (2026-09-01 23:05). ~460 MB footprint vs 6.73 GB for VCTools; no admin/UAC required.
 
 ## Pre-seeded candidates (unverified — confirm on live testnet during the walkthrough)
 
