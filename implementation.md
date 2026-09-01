@@ -187,6 +187,7 @@ rail only — never attempt a live rail/KYC provider.
 - Verify: `cargo --version`, `git log --oneline`, `npm --version`.
 
 ### Phase 1 — Signup, quickstart + full walkthrough on testnet, bug log (scored artifact #1)
+> **STATUS: COMPLETE 2026-09-01.** Walkthrough executed live (register id 856, self-grant + true-delegation variants, Duffel 401 + placeholder-unknown reached). 7 findings confirmed in docs/buglog.md (BUG-001..007): trust-manifest rtmr1_allowlist mismatch (BUG-002), claim-page keys collapsing to one DID (BUG-003), zero-credit agent gating (BUG-004), external Duffel token prereq (BUG-005), empty-profile placeholder gap (BUG-006), SDK stdout dumps (BUG-007). BUG-002 workaround `trustAnchor:{unsafe_trust_server:true}` is carried into all host code. D1: PARTIAL — first/last_name resolve; date_of_birth does NOT; iban/swift/legal_name unconfirmed → marker strategy must verify profile fields in Phase 2/3.
 **Exact order (from the docs; known stuck points inline):**
 1. [ ] SSO signup: `https://go.terminal3.io/adk-community` → claim page → copy `T3N_API_KEY` **now (shown once)**. NOTE THE DID.
 2. [ ] Quickstart: `mkdir my-t3n-app && cd my-t3n-app && npm init -y && npm pkg set type=module && npm install @terminal3/t3n-sdk tsx && export T3N_API_KEY=...` → write `quickstart.ts` (exact code: Appendix A §A.1) → `npx tsx quickstart.ts` → expect `Connected as: did:t3n:...`.
