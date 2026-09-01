@@ -1,0 +1,82 @@
+{
+ "id": "657bf11b-89e4-42ea-bd96-c4339df44f2e",
+ "title": "Try out new docs to build a trusted agent with T3N that we can distribute / host",
+ "slug": "t3n-agent-build-challenge",
+ "description": "<h2 class=\"heading-node\">Docs are refreshed from the prev challenge. Now looking for devs to build useful agents for enterprises on Terminal 3 that can be easily maintained</h2><h2 class=\"heading-node\">Scope Detail</h2><ul class=\"list-node\"><li><p class=\"text-node\">Follow this <a target=\"_blank\" rel=\"noopener noreferrer nofollow\" class=\"link\" href=\"https://go.terminal3.io/adk-community\">LINK</a> to sign up via SSO</p></li><li><p class=\"text-node\">Obtain DID &amp; API key, complete Quickstart and Walkthrough in <a target=\"_blank\" rel=\"noopener noreferrer nofollow\" class=\"link\" href=\"https://docs.terminal3.io/developers/adk/get-started/quickstart\">Docs</a></p></li><li><p class=\"text-node\">Build and submit an enterprise agent with T3N with focus on usefulness &amp; ease of maintenance &amp; running post challenge</p></li><li><p class=\"text-node\">Include in submission if you would want to continue running it or prefer to hand it over to us to maintain (+handover process). <br>* we have a startup program &amp; listing page if you would want to continue running it</p></li></ul><h2 class=\"heading-node\">Submission Requirements</h2><ul class=\"list-node\"><li><p class=\"text-node\">A public Google Doc with public github repo, screenshots and any bug faced will be considered a completed submission</p></li></ul><h2 class=\"heading-node\">Judging Criteria</h2><ul class=\"list-node\"><li><p class=\"text-node\">Time to submit (earlier, faster and more efficient the better)</p></li><li><p class=\"text-node\"><strong>VERY IMPORTANT</strong> - Build quality with focus on <strong>usefulness and ease to maintain</strong> post challenge</p></li><li><p class=\"text-node\">Documentation quality</p></li><li><p class=\"text-node\">Bug submission quality</p></li><li><p class=\"text-node\">Bonus : Sharing it on social media and tagging @terminal3io on X</p></li></ul><h2 class=\"heading-node\">Resources</h2><ul class=\"list-node\"><li><p class=\"text-node\"><a target=\"_blank\" rel=\"noopener noreferrer nofollow\" class=\"link\" href=\"https://go.terminal3.io/adk-community\">https://go.terminal3.io/adk-community</a> (to claim free tokens and ID)</p></li><li><p class=\"text-node\"><a target=\"_blank\" rel=\"noopener noreferrer nofollow\" class=\"link\" href=\"https://docs.terminal3.io/developers/adk/get-started/quickstart\">https://docs.terminal3.io/developers/adk/get-started/quickstart</a> (sections to complete)</p></li></ul><h2 class=\"heading-node\">Reward Structure</h2><ul class=\"list-node\"><li><p class=\"text-node\">1st place 100 USDC</p></li><li><p class=\"text-node\">2nd / 3rd place 50USDC</p></li><li><p class=\"text-node\">4-6 place 30USDC</p></li></ul><p class=\"text-node\"></p><p class=\"text-node\">Note : if more tokens are required DM me at <a target=\"_blank\" rel=\"noopener noreferrer nofollow\" class=\"link\" href=\"https://t.me/wardumb\">https://t.me/wardumb</a> with your DID and quote Superteam.</p>",
+ "deadline": "2026-09-16T15:59:59.999Z",
+ "commitmentDate": "2026-09-23T15:59:59.999Z",
+ "eligibility": [
+  {
+   "type": "text",
+   "order": 1,
+   "optional": false,
+   "question": "Email address"
+  },
+  {
+   "type": "text",
+   "order": 2,
+   "optional": false,
+   "question": "What is your DID generated from the page?"
+  },
+  {
+   "type": "text",
+   "order": 3,
+   "optional": false,
+   "question": "Would you want to continue running this / pass it to us to run it?"
+  }
+ ],
+ "status": "OPEN",
+ "token": "USDC",
+ "rewardAmount": 290,
+ "rewards": {
+  "1": 100,
+  "2": 50,
+  "3": 50,
+  "4": 30,
+  "5": 30,
+  "6": 30
+ },
+ "maxBonusSpots": 0,
+ "sponsorId": "3f40fd7a-befa-4114-965b-f385eb1ead4a",
+ "isPublished": true,
+ "skills": [
+  {
+   "skills": "Backend",
+   "subskills": [
+    "Javascript"
+   ]
+  }
+ ],
+ "type": "bounty",
+ "requirements": null,
+ "isWinnersAnnounced": false,
+ "region": "Global",
+ "pocSocials": "https://t.me/wardumb",
+ "publishedAt": "2026-08-26T02:27:16.013Z",
+ "isPrivate": false,
+ "agentAccess": "HUMAN_ONLY",
+ "hackathonId": null,
+ "compensationType": "fixed",
+ "maxRewardAsk": null,
+ "minRewardAsk": null,
+ "isFndnPaying": false,
+ "winnersAnnouncedAt": null,
+ "isPro": false,
+ "sponsor": {
+  "name": "Terminal 3 Network",
+  "logo": "https://res.cloudinary.com/dgvnuwspr/image/upload/v1787711355/earn-sponsor/unljc7likqpxj4li2xc2.webp",
+  "slug": "terminal3io",
+  "url": "https://terminal3.io",
+  "entityName": "Terminal 3",
+  "isVerified": false,
+  "isCaution": false
+ },
+ "poc": {
+  "id": "fa441f41-998d-4fd3-a135-5cc28843fccf",
+  "firstName": "Ian",
+  "lastName": "Chong",
+  "username": "iancrj",
+  "photo": "https://res.cloudinary.com/dgvnuwspr/image/upload/v1785387510/earn-pfp/qlqhgbieky3izr3opbos.webp"
+ },
+ "Hackathon": null
+}

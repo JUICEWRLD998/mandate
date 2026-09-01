@@ -1,0 +1,14 @@
+# MANDATE local ignore rules
+node_modules/
+target/
+*.log
+rail.log
+agent-output.log
+.env
+.env.local
+*.local
+.DS_Store
+Thumbs.db
+dist/
+coverage/
+.hermes/
