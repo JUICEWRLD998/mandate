@@ -1,4 +1,5 @@
 import { getContractVersion } from "@terminal3/t3n-sdk";
+import type { BoundGrant } from "@terminal3/t3n-sdk";
 import { pathToFileURL } from "node:url";
 import { connectAll, type Session } from "./connect.js";
 import { loadContractRecord } from "./lib/records.js";
@@ -7,21 +8,35 @@ import { loadContractRecord } from "./lib/records.js";
  * Grant / revoke / show the user-signed delegation grant that ARMS the MANDATE
  * contract for the agent session.
  *
- * Mirrors the phase-1 walkthrough invoke.ts grant step exactly (ran green on
- * testnet 2026-09-01): the USER session signs `agent-auth-update` on
- * `tee:user/contracts`, scoping the AGENT DID to this one contract script, its
- * two functions, and the rail egress host.
+ * DECISION D2 — RESOLVED LIVE 2026-09-02 (testnet): the documented legacy write
+ * (`agent-auth-update` on `tee:user/contracts`, free) succeeds but NO LONGER
+ * arms egress — invoking a granted contract still fails with
+ * `egress denied for host <host>`. Egress is enforced from the MODERN
+ * `member-delegation` document on `tee:authorisations/contracts` (SelfOnly,
+ * METERED — ~1e10 per op), written via the SDK's read-merge-write
+ * `updateMemberDelegation(BoundGrant)` and revoked with a full-doc
+ * `member-delegation-update`. This contradicts the docs' walkthrough (docs
+ * drift — buglog candidate). Strategy: write BOTH surfaces — legacy first for
+ * docs parity (best-effort, its failure is a warning), modern as the
+ * functional grant (its failure aborts). Host entries are matched WITHOUT
+ * port (live error names `host localhost` for `http://localhost:8787`), so
+ * the default host is `localhost`, not `localhost:8787`.
  *
- * Denial surface: with no grant (or a revoked one) the contract still runs —
- * only the outbound rail call fails with `host/http.egress_denied` (docs' #1
- * warning: "set the grant before you invoke").
+ * Denial surface: with no (modern) grant the contract still runs — only the
+ * outbound rail call fails with `host/http.egress_denied` (docs' #1 warning:
+ * "set the grant before you invoke").
  */
 
 /** Default grant shape: both MANDATE contract functions. */
 const DEFAULT_FUNCTIONS = ["onboard-customer", "pay-invoice"];
 
-/** Default egress host — matches the contract's RAIL_BASE const. */
-const DEFAULT_HOSTS = ["localhost:8787"];
+/** Default egress host — host WITHOUT port (live-verified match semantics). */
+const DEFAULT_HOSTS = ["localhost"];
+
+/** Legacy (docs-surface) grants contract. */
+const LEGACY_GRANTS_CONTRACT = "tee:user/contracts";
+/** Modern (functional, metered) delegation contract. */
+const MODERN_GRANTS_CONTRACT = "tee:authorisations/contracts";
 
 /**
  * Parse the optional functions CSV into the grant's function allowlist.
@@ -47,11 +62,10 @@ export function parseFunctionsArg(raw: string | undefined): string[] {
 /**
  * Parse the optional hosts CSV into the grant's egress allowlist.
  *
- * Host strings carry NO scheme (no `http://` — the contract's RAIL_BASE const
- * is `http://localhost:8787`, so its allowlist entry is `localhost:8787`).
- * Undefined → the default host matching RAIL_BASE; a blank CSV throws. Absent
- * allowedHosts entirely would mean deny-all egress, so a grant never builds an
- * empty list.
+ * Host strings carry NO scheme and NO port — the enclave matches the host
+ * portion of the outbound URL (`http://localhost:8787` → host `localhost`;
+ * verified live from the `egress denied for host localhost` error). Undefined
+ * → `localhost` (matches the contract's RAIL_BASE); a blank CSV throws.
  */
 export function parseHostsArg(raw: string | undefined): string[] {
   if (raw === undefined) return [...DEFAULT_HOSTS];
@@ -83,9 +97,9 @@ export interface RevokeScriptOptions {
 }
 
 /**
- * Build the exact `agent-auth-update` input shape from the walkthrough
- * (camelCase `allowedHosts` — the documented shape that ran green; the wire
- * serializer emits it, do not rename to snake_case).
+ * Build the exact legacy `agent-auth-update` input shape from the walkthrough
+ * (camelCase `allowedHosts` — the DOCUMENTED shape; kept for docs parity, see
+ * module doc: it no longer arms egress on testnet).
  */
 export function buildGrantInput(opts: GrantInputOptions): unknown {
   return {
@@ -106,41 +120,82 @@ export function buildGrantInput(opts: GrantInputOptions): unknown {
 }
 
 /**
- * Build the revocation input: an EMPTY agents array = revoke all standing
- * grants (documented revocation — same key, no further access).
+ * Build the legacy revocation input: an EMPTY agents array = revoke all
+ * standing grants on the legacy surface (documented shape; kept for parity).
  */
 export function buildRevokeInput(): unknown {
   return { agents: [] };
 }
 
 /**
- * Sign the grant: the USER (data owner) authorises the AGENT to run the
- * contract's script. `agent-auth-update` on `tee:user/contracts` is SelfOnly —
- * only the USER may sign. The grant must name the agent's DID, and
- * `allowedHosts` must include 'localhost:8787' (the contract's RAIL_BASE) or
- * every rail egress is denied (`host/http.egress_denied`).
- *
- * @returns the resolved `tee:user/contracts` grants version written
+ * Build the MODERN `BoundGrant` (snake_case, wire-verbatim — the SDK performs
+ * NO casing transform): grantee = the agent DID, contract_id = the canonical
+ * z: name, functions + egress allowed_hosts + version_req as given.
+ * `scopes` is empty: MANDATE's functions grant no org-data scope paths —
+ * they act on profile markers / KV / egress only. (If the live write rejects
+ * empty scopes, the fallback is `["*"]` — tracked in the D2 note.)
+ */
+export function buildBoundGrant(opts: GrantInputOptions): BoundGrant {
+  return {
+    grantee: opts.agentDid,
+    contract_id: opts.scriptName,
+    functions: opts.functions,
+    scopes: [],
+    version_req: opts.versionReq,
+    allowed_hosts: opts.allowedHosts,
+  };
+}
+
+/**
+ * Sign the grant on BOTH surfaces. Only the USER (data owner) may sign —
+ * every delegation write is SelfOnly on the caller's own document.
+ *   1. legacy `agent-auth-update` on tee:user/contracts (free; docs surface;
+ *      failure here is a WARNING — it no longer gates egress);
+ *   2. modern `updateMemberDelegation(BoundGrant)` on
+ *      tee:authorisations/contracts (METERED; the functional grant — its
+ *      failure aborts).
+ * `allowedHosts` must include the contract's egress host (`localhost`) or
+ * every rail call is denied.
  */
 export async function grantScript(
   agent: Session,
   user: Session,
   nodeUrl: string,
   opts: GrantScriptOptions
-): Promise<string> {
-  const grantsVersion = await getContractVersion(nodeUrl, "tee:user/contracts");
-  await user.client.execute({
-    contract_id: "tee:user/contracts",
-    contract_version: grantsVersion,
-    function_name: "agent-auth-update",
-    input: buildGrantInput({ agentDid: agent.did, ...opts }),
-  });
-  return grantsVersion;
+): Promise<void> {
+  // Legacy — best effort, docs parity only.
+  try {
+    const legacyVersion = await getContractVersion(
+      nodeUrl,
+      LEGACY_GRANTS_CONTRACT
+    );
+    await user.client.execute({
+      contract_id: LEGACY_GRANTS_CONTRACT,
+      contract_version: legacyVersion,
+      function_name: "agent-auth-update",
+      input: buildGrantInput({ agentDid: agent.did, ...opts }),
+    });
+  } catch (err) {
+    console.warn(
+      "legacy agent-auth-update write failed (non-fatal — it no longer arms egress):",
+      err instanceof Error ? err.message : err
+    );
+  }
+
+  // Modern — the functional grant (D2).
+  await user.client.updateMemberDelegation(
+    buildBoundGrant({
+      agentDid: agent.did,
+      ...opts,
+    })
+  );
 }
 
 /**
- * Revoke the grant: same `agent-auth-update` write with an empty agents array
- * (buildRevokeInput) — key unchanged, access gone.
+ * Revoke on BOTH surfaces. Legacy: empty agents array. Modern: a full-doc
+ * `member-delegation-update` write with an EMPTY grants list on
+ * tee:authorisations/contracts — the document IS the state, so empty grants
+ * revoke every delegated grant (demo semantics: key unchanged, access gone).
  */
 export async function revokeScript(
   agent: Session,
@@ -148,46 +203,65 @@ export async function revokeScript(
   nodeUrl: string,
   opts: RevokeScriptOptions
 ): Promise<void> {
-  const grantsVersion = await getContractVersion(nodeUrl, "tee:user/contracts");
+  // Legacy — best effort, docs parity only.
+  try {
+    const legacyVersion = await getContractVersion(
+      nodeUrl,
+      LEGACY_GRANTS_CONTRACT
+    );
+    await user.client.execute({
+      contract_id: LEGACY_GRANTS_CONTRACT,
+      contract_version: legacyVersion,
+      function_name: "agent-auth-update",
+      input: buildRevokeInput(),
+    });
+  } catch (err) {
+    console.warn(
+      "legacy agent-auth-update revoke failed (non-fatal):",
+      err instanceof Error ? err.message : err
+    );
+  }
+
+  // Modern — full-doc empty write (1 metered op).
+  const modernVersion = await getContractVersion(nodeUrl, MODERN_GRANTS_CONTRACT);
   await user.client.execute({
-    contract_id: "tee:user/contracts",
-    contract_version: grantsVersion,
-    function_name: "agent-auth-update",
-    input: buildRevokeInput(),
+    contract_id: MODERN_GRANTS_CONTRACT,
+    contract_version: modernVersion,
+    function_name: "member-delegation-update",
+    input: { grants: [], discover_dids: [] },
   });
 }
 
 /**
- * Decision D2 read-back. The grant was written via the LEGACY
- * `agent-auth-update` on `tee:user/contracts` (the documented walkthrough
- * path = scoring surface). The modern mirror is `member-delegation-*` on
- * `tee:authorisations/contracts` (D2 — docs drift, reported in buglog), so the
- * read side tries the SDK's current `getMemberDelegation()` and — when the API
- * is absent or throws — returns a note instead of failing the CLI.
+ * Read the caller's own (modern) delegation document via the SDK's typed
+ * `getMemberDelegation()` (SelfOnly, METERED). When the read is unavailable
+ * (no credits / API absent) return a note instead of failing the CLI.
  */
 export async function showGrant(
   user: Session,
   nodeUrl: string
 ): Promise<unknown> {
   try {
-    return await user.client.getMemberDelegation?.();
+    return await user.client.getMemberDelegation();
   } catch (err) {
     return {
-      note: "no readable delegation API on SDK 5.5.0 — verify by invoking (allowed/egress-denied behavior)",
+      note: "member-delegation read unavailable (credits or API) — verify by invoking (allowed/egress-denied behavior)",
       error: err instanceof Error ? err.message : String(err),
     };
   }
 }
 
 /**
- * CLI entry: `npx tsx src/grant.ts <grant|revoke|show> [functions] [hosts]`.
+ * CLI entry: `npx tsx src/grant.ts <grant|revoke|show> [functionsCSV] [hostsCSV]`.
  * grant/revoke sign or clear the delegation via the USER session for the
  * contract named in host/.contract-record.json (written by `npm run register`).
  */
 export async function main(): Promise<void> {
   const action = process.argv[2];
   if (action !== "grant" && action !== "revoke" && action !== "show") {
-    console.error("usage: npx tsx src/grant.ts <grant|revoke|show> [functionsCSV] [hostsCSV]");
+    console.error(
+      "usage: npx tsx src/grant.ts <grant|revoke|show> [functionsCSV] [hostsCSV]"
+    );
     process.exit(1);
   }
 
@@ -211,7 +285,14 @@ export async function main(): Promise<void> {
     });
     console.log(
       JSON.stringify(
-        { agentDid: agent.did, scriptName, versionReq, functions, allowedHosts },
+        {
+          agentDid: agent.did,
+          scriptName,
+          versionReq,
+          functions,
+          allowedHosts,
+          surfaces: ["legacy agent-auth-update (docs parity)", "modern member-delegation (functional)"],
+        },
         null,
         2
       )
@@ -219,7 +300,7 @@ export async function main(): Promise<void> {
     console.log("hint: revoke with: `npm run grant -- revoke`");
   } else if (action === "revoke") {
     await revokeScript(agent, user, nodeUrl, { scriptName, versionReq });
-    console.log("grant revoked (agents: [])");
+    console.log("grant revoked (legacy agents: [] + modern member-delegation: empty doc)");
     console.log("hint: re-arm with: `npm run grant -- grant`");
   } else {
     console.log(JSON.stringify(await showGrant(user, nodeUrl), null, 2));
