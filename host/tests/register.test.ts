@@ -124,13 +124,31 @@ describe("register.ts", () => {
       });
     });
 
-    it("resolves 'exists' when the map already exists", async () => {
+    it("re-points the ACL when the map already exists (re-registration)", async () => {
       const create = vi
         .fn()
         .mockRejectedValue(new Error("map already exists (idempotent)"));
-      const tenant = { maps: { create } } as unknown as TenantClient;
+      const update = vi.fn().mockResolvedValue({});
+      const tenant = { maps: { create, update } } as unknown as TenantClient;
 
-      await expect(ensureSecretsMap(tenant, 42)).resolves.toBe("exists");
+      await expect(ensureSecretsMap(tenant, 42)).resolves.toBe("updated");
+      expect(update).toHaveBeenCalledTimes(1);
+      expect(update).toHaveBeenCalledWith("secrets", {
+        writers: { only: [42] },
+        readers: { only: [42] },
+      });
+    });
+
+    it("reports 'stale' when the existing map's ACL re-point fails", async () => {
+      const create = vi
+        .fn()
+        .mockRejectedValue(new Error("map already exists (idempotent)"));
+      const update = vi
+        .fn()
+        .mockRejectedValue(new Error("access denied: caller cannot update map"));
+      const tenant = { maps: { create, update } } as unknown as TenantClient;
+
+      await expect(ensureSecretsMap(tenant, 42)).resolves.toBe("stale");
     });
 
     it("rethrows errors that are not 'map already exists'", async () => {

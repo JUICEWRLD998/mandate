@@ -86,17 +86,18 @@ export async function registerContract(
  * omitted reader set creates a map nobody — not even the tenant — can read,
  * with no error.
  *
- * Re-registration caveat: an EXISTING secrets map keeps its ACLs pointing at
- * the OLD contract_id — re-registering allocates a NEW id and there is no API
- * to fetch the tail's current id (known platform gap), so a repeat run on the
- * same tenant strands the map with the dead id as its only reader/writer. On
- * 'exists' the caller prints a warning recommending a clean tenant for repeat
- * runs.
+ * Re-registration caveat (handled, not just warned): an EXISTING secrets map
+ * keeps its ACLs pointing at the OLD contract_id — re-registering allocates a
+ * NEW id and there is no API to fetch the tail's current id (known platform
+ * gap). ensureSecretsMap therefore re-points the map's readers/writers at the
+ * new contract_id via tenant.maps.update ('updated'); if even the re-point
+ * fails it reports 'stale' and the caller warns that the contract's KV read
+ * will fail.
  */
 export async function ensureSecretsMap(
   tenant: TenantClient,
   contractId: number
-): Promise<"created" | "exists"> {
+): Promise<"created" | "updated" | "stale"> {
   try {
     await tenant.maps.create({
       tail: "secrets",
@@ -108,10 +109,23 @@ export async function ensureSecretsMap(
   } catch (err) {
     // The node's map-create is idempotent on an existing tail: it replies
     // "map already exists" instead of throwing a second create.
-    if (err instanceof Error && /map already exists/i.test(err.message)) {
-      return "exists";
+    if (!(err instanceof Error) || !/map already exists/i.test(err.message)) {
+      throw err;
     }
-    throw err;
+    // Re-registration path: the EXISTING map's readers/writers still point at
+    // the PREVIOUS contract_id (the node allocates a new id per registration
+    // with no API to fetch the current one). Re-point the ACL at the new id
+    // via tenant.maps.update so the freshly registered contract can read the
+    // secrets map; if that fails, report 'stale' and let the caller warn.
+    try {
+      await tenant.maps.update("secrets", {
+        writers: { only: [contractId] },
+        readers: { only: [contractId] },
+      });
+      return "updated";
+    } catch (updateErr) {
+      return "stale";
+    }
   }
 }
 
@@ -154,9 +168,13 @@ async function main(): Promise<void> {
   });
 
   const mapState = await ensureSecretsMap(tenant, contract_id);
-  if (mapState === "exists") {
+  if (mapState === "updated") {
+    console.log(
+      `secrets map already existed — readers/writers re-pointed to contract_id ${contract_id}`
+    );
+  } else if (mapState === "stale") {
     console.warn(
-      "secrets map already exists — if this is a RE-registration its ACL still points at the previous contract_id (known platform gap); a clean tenant is safest for repeat runs"
+      "secrets map already exists AND its ACL could not be re-pointed (readers/writers still name the previous contract_id) — the contract will fail its KV read; delete/recreate the map or use a clean tenant"
     );
   }
 
