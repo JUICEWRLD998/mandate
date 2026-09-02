@@ -204,14 +204,18 @@ rail only — never attempt a live rail/KYC provider.
 **Deliverable:** `docs/buglog.md` — every stuck point verbatim (command, error, env, unblock). This is raw material for the Phase 7 bug report. Verify: all steps green; buglog entries each reproducible.
 
 ### Phase 2 — Rust TEE contract (`contract/`)
-- [ ] Scaffold crate per Appendix C; `wit/world.wit` importing ONLY: `host:tenant/tenant-context@1.0.0`, `host:interfaces/logging@2.1.0`, `host:interfaces/kv-store@2.1.0`, `host:interfaces/http-with-placeholders@2.1.0`; export `contracts` with `onboard-customer` + `pay-invoice` (generic-input envelope).
-- [ ] `src/lib.rs`: wit-bindgen generate + Guest impl dispatching per-fn (no central dispatch).
-- [ ] `src/kyc.rs` (`onboard-customer`): parse `{customer_id}`; read `rail_api_key` from `z:<tid>:secrets` (hex-encode tenant_did); build body with markers (`legal_name`, `date_of_birth` per D1); `hwp::call` POST `{RAIL_BASE}/kyc`; map `HttpError` via `format_http_error` (verbatim from z-tenant-flight); parse only `kyc_id/status/risk_score`; never forward raw body; log failures in-enclave, return sanitized strings.
-- [ ] `src/pay.rs` (`pay-invoice`): build `{beneficiary:{legal_name, iban, swift}, amount, currency, reference}` with `{{profile.*}}` markers (per D1); POST `{RAIL_BASE}/pay`; parse `payment_id/status/iban_sha256`; **never** resolve or log markers.
-- [ ] Input hygiene: reject any payload carrying PII at parse (mirror `book_offer_rejects_inline_pii` test — error contains `"bad input"`). Cap input size (reference uses `MAX_OFFER_REQ_BYTES = 65_536`; serde_json OOMs in WASM).
-- [ ] No duplicate Content-Type header (host sets it via `.json()`).
-- [ ] Tests: `cargo test --lib` — marker rendering, input guards, verdict mapping, PII-hygiene checklist from walkthrough page 5 (PII never in return values or log lines).
-- [ ] Build: `cargo build --target wasm32-wasip2 --release` → `contract/target/wasm32-wasip2/release/z_mandate.wasm`; verify with wasm-tools.
+> **STATUS: COMPLETE 2026-09-02** (branch phase-2/contract, 2-agent fan-out: kyc.rs | pay.rs).
+> World `z:mandate@0.1.0` imports ONLY tenant-context@1.0.0 + logging/kv-store/http-with-placeholders@2.1.0 (vendored wit/deps, pinned — canonical is 2.2.0); export `contracts` {onboard-customer, pay-invoice}. Build verified: `cargo test --target x86_64-pc-windows-gnu --lib` = 21/21 green (10 kyc + 9 pay + 2 lib); `cargo build --release` (target wasm32-wasip2 via .cargo/config.toml) → `z_mandate.wasm` 171,304 B.
+> PII design (each fn): request structs PII-free + `#[serde(deny_unknown_fields)]` → inline PII rejected at parse (`bad input: unknown field …` — REAL hygiene; the z-tenant-flight test is aspirational); outbound bodies markers-only via `crate::MARKER_*` consts; verdicts scrubbed (kyc_id/status/risk_score? · payment_id/status/iban_sha256); raw rail body NEVER in errors/logs (deliberate deviation from Duffel reference — a rail could echo resolved PII; HTTP code only); logs carry only operational ids; 65,536-B in/out guards.
+> **D1 sequencing note:** profile-field verification (legal_name/iban/swift_bic/date_of_birth resolution) is IMPOSSIBLE before a contract emitting those markers is registered — that is Phase 3/5 territory (register → grant → invoke). Marker consts in lib.rs are the single swap point per the D1 decision tree (direct → user-upsert → demo-hardcoded per z-tenant-flight passport precedent). First live registration must probe each marker and record exact error strings in buglog.
+- [x] Scaffold crate per Appendix C; `wit/world.wit` importing ONLY: `host:tenant/tenant-context@1.0.0`, `host:interfaces/logging@2.1.0`, `host:interfaces/kv-store@2.1.0`, `host:interfaces/http-with-placeholders@2.1.0`; export `contracts` with `onboard-customer` + `pay-invoice` (generic-input envelope).
+- [x] `src/lib.rs`: wit-bindgen generate + Guest impl dispatching per-fn (no central dispatch).
+- [x] `src/kyc.rs` (`onboard-customer`): parse `{customer_id}`; read `rail_api_key` from `z:<tid>:secrets` (hex-encode tenant_did); build body with markers (`legal_name`, `date_of_birth` per D1); `hwp::call` POST `{RAIL_BASE}/kyc`; map `HttpError` via `format_http_error` (verbatim from z-tenant-flight); parse only `kyc_id/status/risk_score`; never forward raw body; log failures in-enclave, return sanitized strings.
+- [x] `src/pay.rs` (`pay-invoice`): build `{beneficiary:{legal_name, iban, swift}, amount, currency, reference}` with `{{profile.*}}` markers (per D1); POST `{RAIL_BASE}/pay`; parse `payment_id/status/iban_sha256`; **never** resolve or log markers.
+- [x] Input hygiene: reject any payload carrying PII at parse via `deny_unknown_fields` (error contains `"bad input"` — 4 tests prove it). Cap input size (65,536; serde_json OOMs in WASM).
+- [x] No duplicate Content-Type header (host sets it via `.json()` — rail_headers sends Authorization only).
+- [x] Tests: `cargo test --lib` — marker rendering, input guards, verdict mapping, PII-hygiene checklist from walkthrough page 5 (PII never in return values or log lines).
+- [x] Build: `cargo build --release` (config targets wasm32-wasip2) → `contract/target/wasm32-wasip2/release/z_mandate.wasm` (171,304 B).
 - Verify: build clean, tests pass, `wasm-tools component wit` lists imports + `export contracts`.
 
 ### Phase 3 — TypeScript agent host (`host/`)
