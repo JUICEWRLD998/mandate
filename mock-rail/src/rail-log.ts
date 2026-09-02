@@ -10,7 +10,8 @@ import { fileURLToPath } from "node:url";
  * enclave substituted for {{profile.*}} markers. That is the whole point —
  * the demo's "magic moment" is the side-by-side:
  *
- *   mock-rail/rail.log      → real values  (GB29 NWBK 6016 1331 9268 19 …)
+ *   mock-rail/rail.log      → real values  (the demo IBAN, GB29 …, resolved
+ *                               from {{profile.iban}} inside the enclave)
  *   host/agent-output.log   → markers only ({{profile.iban}} …)
  *
  * The same request, two views: the secret moved without touching the mover.
