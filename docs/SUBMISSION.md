@@ -8,7 +8,7 @@
 |---|---|
 | Project name | MANDATE |
 | Public repository | https://github.com/JUICEWRLD998/mandate |
-| Docs in this repo | [README.md](README.md) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/buglog.md](docs/buglog.md) |
+| Docs in this repo | [README.md](README.md) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/buglog.md](docs/buglog.md) · [BUG-REPORTS.md](BUG-REPORTS.md) |
 | Submitted | 2026-09-02 (bounty deadline 2026-09-16 15:59:59 UTC) |
 | Applicant email | <YOUR-EMAIL> |
 | Applicant T3N DID | <YOUR-DID> |
@@ -117,7 +117,7 @@ The listing's criteria, in order, and the evidence for each:
 | 1 | Time to submit | Scaffold → working demo runner in **two days** (2026-09-01 research, quickstart, walkthrough, buglog; 2026-09-02 contract, host, rail, e2e runner). Submitted ~2026-09-02, roughly two weeks before the 2026-09-16 15:59:59 UTC deadline, when the listing already showed 60+ entries. |
 | 2 | VERY IMPORTANT — usefulness and ease to maintain (the sponsor wants to host/distribute the winner) | Built for handover, not demo-only: one env contract (`host/.env.example`), no secrets in the repo, `npm run register` / `npm run grant` / `bash scripts/demo.sh` as the whole surface; a contract-record file bridges steps; the money rail is config-swappable (Duffel pattern — point `RAIL_URL` + the grant's `allowedHosts` at a real processor and nothing else changes); profile markers swap at one edit point (`MARKER_*` consts); a version-bump procedure ties contract ↔ WIT ↔ host; a dry-run mode makes the demo verifiable with zero credits or network. See §9 Handover. |
 | 3 | Documentation quality | This Google Doc; [README.md](README.md) (entry point, run-it-yourself, troubleshooting, known deviations); [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); [docs/buglog.md](docs/buglog.md). Every command and quoted error is real; pending live evidence is marked pending, not claimed. |
-| 4 | Bug submission quality | [docs/buglog.md](docs/buglog.md): **9 findings (BUG-001…009)** — 7 walkthrough findings plus 2 newer live findings (delegation docs drift; egress host matching) — each with verbatim error, environment, severity, reproduction from clean state and suggested fix. Strongest findings summarized in §8. |
+| 4 | Bug submission quality | **9 findings (BUG-001…009)** — 7 walkthrough findings plus 2 newer live findings (delegation docs drift; egress host matching) — each with verbatim error, environment, severity, reproduction from clean state and suggested fix; formalized as reports R01–R14 in [BUG-REPORTS.md](BUG-REPORTS.md), raw verbatim log in [docs/buglog.md](docs/buglog.md). Strongest findings summarized in §8. |
 | 5 | Bonus — X post tagging @terminal3io | *(pending)* Post planned with the magic-moment screenshot once the live run lands; tagged @terminal3io. |
 
 **Evidence summary:** contract registered on testnet (id 862, `z:…:mandate-contracts` v0.1.0); 21 + 46 + 12 + 30 tests green; WASM component builds at 171,304 bytes (under the registration cap); real error strings reproduced; audit primitives exercised. Repository is public and MIT-licensed.
@@ -159,7 +159,7 @@ Troubleshooting essentials (details in README + buglog): the quickstart trust-an
 
 ## 8. Bug reports — strongest findings
 
-Full reproductions for every entry — steps, verbatim output, environment (Windows 11 / Node 24 / SDK 5.5.0 / docs URL), severity, suggested fix — live in [docs/buglog.md](docs/buglog.md). Summary:
+Formal, submission-grade reports (R01–R14) with a severity matrix and clean-state reproductions live in [BUG-REPORTS.md](BUG-REPORTS.md); full reproductions for every entry — steps, verbatim output, environment (Windows 11 / Node 24 / SDK 5.5.0 / docs URL), severity, suggested fix — live verbatim in [docs/buglog.md](docs/buglog.md). Summary:
 
 | Finding | What happens | Impact | Workaround |
 |---|---|---|---|

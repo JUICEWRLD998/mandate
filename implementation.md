@@ -257,19 +257,11 @@ rail only — never attempt a live rail/KYC provider.
 - Verify: stranger can clone + run on testnet from README alone. — **commands verified by the agents + orchestrator against the live repo; full stranger-run pending the final live testnet run (credits) + screenshot captures, which also update SUBMISSION §5 frames.**
 
 ### Phase 7 — Bug report artifact (scored criterion — first-class deliverable)
-- [ ] Formalize `docs/buglog.md` into submission-grade reports: per bug — summary, steps to reproduce, expected vs actual, environment (OS / SDK 5.5.0 / docs URL), severity, suggested fix. Every entry reproduces from a clean state.
-- **Known ammo (from research — verify each live before claiming):**
-  1. Docs 404s: `/api-reference/openapi.json` and `/terminal-3-openapi.yml` are linked from `llms.txt` + reference page ("21 paths, 24 operations, OpenAPI 3.0.3") but return 404.
-  2. `setEnvironment` default contradiction: Quickstart says defaults to testnet; reference table says defaults to production.
-  3. SDK naming drift: reference lists `getScriptVersion(nodeUrl, scriptName)`; the walkthrough (runnable example) uses `getContractVersion(nodeUrl, TENANT_SCRIPT)`.
-  4. Stale manifest docs: `z-tenant-flight` README/lib.rs shows a `host_capabilities` JSON manifest; docs explicitly say there is no manifest (WIT imports only).
-  5. Host API table vs WIT: `http-with-placeholders` gating column mentions a per-contract `placeholder_allowlist`; vendored WIT says the only gate is the hard `profile` namespace + delegation. WIT text is more precise — verify on testnet.
-  6. `getAuditEvents()`: docs mark "reported to exist but undocumented"; it IS a typed 5.5.0 method.
-  7. `tenant_did()` raw-bytes gotcha: docs warn of missing OR double hex-encode → path matches nothing.
-  8. `readers` ACL deny-by-default gotcha (map created but deny-all with no error, only a console.warn).
-  9. Re-registration allocates a NEW contract_id with no API to fetch the tail's current id → stale map ACLs (docs admit the gap).
-  10. `{{profile.iban}}`-style fields not in the documented profile schema (if D1 confirms) — top follow-on primitive: a payment/account profile section.
-- **Honest caveat to include:** tenant KV maps are not tamper-proof against their own owner; the append-only guarantee lives in the audit ledger, not the KV maps.
+> **STATUS: COMPLETE 2026-09-02** (branch phase-7/bugs, 2-agent fan-out: BUG-REPORTS.md | README+SUBMISSION consistency). docs/BUG-REPORTS.md created (~285 lines, 14 formal reports R01–R14): severity-sorted summary matrix (3 high: R02 trust-manifest, R03 claim-page DID collapse, R08 agent-auth-update no-longer-arms-egress), full per-report fields (Summary/Area/Severity/Status/Environment/Docs URL/clean-state repro/Expected-vs-Actual verbatim/Impact/Suggested fix/Workaround applied naming the exact host file), documented-footguns subsection (tenant_did hex, readers deny-by-default, KV owner-tamperable), methodology section with D1-open note + R-ID↔buglog mapping for grader cross-checks. Docs-drift reports re-verified against live-fetched docs.terminal3.io pages (incl. a bonus find: the buglog's recorded build-contract URL itself 404s — page lives under /walkthrough/). README.md + docs/SUBMISSION.md now cite BOTH artifacts (formal reports + raw log) with counts preserved.
+> Honesty guard (orchestrator): R09's modern-surface "allowed" step qualified — that evidence is the phase-1 Duffel egress run, not a MANDATE modern-grant run (pending user credits); no other overclaims found in the cross-check.
+- [x] Formalize `docs/buglog.md` into submission-grade reports: per bug — summary, steps to reproduce, expected vs actual, environment (OS / SDK 5.5.0 / docs URL), severity, suggested fix. Every entry reproduces from a clean state. → **docs/BUG-REPORTS.md (R01–R14); buglog.md stays as the verbatim raw log.**
+- [x] Known ammo exercised: all 10 research candidates now verified (404s, setEnvironment contradiction [docs converged by 09-02 — resolved], getScriptVersion drift [fixed by 09-02], stale manifest, placeholder_allowlist vs WIT, getAuditEvents typed, tenant_did hex, readers ACL, re-registration gap, profile-schema D1 [open — pending live pay run]).
+- Honest caveat: tenant KV not tamper-proof; append-only guarantee in the audit ledger → carried in R-footguns + SUBMISSION §8 + ARCHITECTURE §8.2.
 
 ### Phase 8 — Submission
 - [ ] X post tagging @terminal3io (bonus criterion) with the magic-moment screenshot.

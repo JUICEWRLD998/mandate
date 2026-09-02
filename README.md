@@ -100,6 +100,7 @@ terminal3/
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — deep dive: data flow, threat model, decision log.
 - [docs/SUBMISSION.md](docs/SUBMISSION.md) — the bounty submission package (Google Doc text, screenshot index, bug-report summary).
 - [docs/buglog.md](docs/buglog.md) — verbatim live-testnet findings BUG-001…009 (a scored artifact in its own right).
+- [docs/BUG-REPORTS.md](docs/BUG-REPORTS.md) — formalized, submission-grade bug reports (R01–R14, severity matrix, clean-state reproductions).
 
 ---
 
@@ -193,7 +194,7 @@ Judging criteria from the Superteam listing (in order), each mapped to concrete 
 | 1 | Time to submit (earlier is better) | Walkthrough executed live 2026-09-01; build + docs finalized 2026-09-02 — ≥ 14 days before the 2026-09-16 15:59:59 UTC deadline | timestamps in [docs/buglog.md](docs/buglog.md); git history |
 | 2 | Usefulness & ease to maintain — **VERY IMPORTANT** | Clone-and-run in five commands, including a no-network dry run; single swap points (`MARKER_*` consts, `RAIL_BASE`, `PAY_BODY_TEMPLATE`); re-registration re-points map ACLs automatically; deterministic self-asserting demo; gitignored secrets/logs; no MSVC needed to build | §Run it yourself; `scripts/demo.sh` (`DEMO_DRY=1`); `contract/src/lib.rs`; `host/src/register.ts` `ensureSecretsMap`; [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | 3 | Documentation quality | Criteria-mapped README (this file), deep-dive architecture doc, submission package, verbatim bug log; every documented command copy-paste verified | this file; [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); [docs/SUBMISSION.md](docs/SUBMISSION.md) |
-| 4 | Bug submission quality | 9 live-confirmed findings (BUG-001…009), each with verbatim error, reproduction, severity, status, suggested fix | [docs/buglog.md](docs/buglog.md) |
+| 4 | Bug submission quality | 9 live-confirmed findings (BUG-001…009), each with verbatim error, reproduction, severity, status, suggested fix | [docs/BUG-REPORTS.md](docs/BUG-REPORTS.md) — formalized R01–R14 (severity matrix, clean-state reproductions); raw log: [docs/buglog.md](docs/buglog.md) |
 | 5 | Bonus — X post tagging @terminal3io | a social post, not a repo artifact; checklist and planned post live in the submission package | [docs/SUBMISSION.md](docs/SUBMISSION.md) |
 
 ---
