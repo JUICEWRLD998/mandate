@@ -1,0 +1,47 @@
+/// z-mandate WIT world — MANDATE: enterprise onboarding + first-payment.
+///
+/// Imports required host capabilities:
+///   - tenant-context:        tenant DID (hex-encoded to build z:<tid>:secrets)
+///   - logging:               debug / info / error lines (no PII ever)
+///   - kv-store:              reads the `secrets` map for the rail API key
+///   - http-with-placeholders: BOTH outbound calls carry `{{profile.<field>}}`
+///                             markers the host resolves from the calling
+///                             user's profile at dispatch time, so customer
+///                             identity / bank plaintext never enters WASM.
+///
+/// Deliberately NO plain `http` import (every MANDATE call carries profile
+/// markers), NO outbox / clock / authorisation imports — the minimal
+/// capability surface that still delivers the full audit story.
+package z:mandate@0.1.0;
+
+world mandate {
+    import host:tenant/tenant-context@1.0.0;
+    import host:interfaces/logging@2.1.0;
+    import host:interfaces/kv-store@2.1.0;
+    import host:interfaces/http-with-placeholders@2.1.0;
+
+    export contracts;
+}
+
+interface contracts {
+    /// Standard 3-field envelope used by all contracts callable from the node.
+    /// `input`        — JSON-serialized request payload specific to the function.
+    /// `user-profile` — deliberately NOT read by z-mandate; marker resolution
+    ///                  is the host's job inside the enclave.
+    /// `context`      — JSON-serialized DynamicContext (node-minted, trusted).
+    record generic-input {
+        input:        option<list<u8>>,
+        user-profile: option<list<u8>>,
+        context:      option<list<u8>>,
+    }
+
+    /// Onboard a customer at the money rail (KYC).
+    /// Input  (JSON): { customer_id }                       — no PII fields
+    /// Output (JSON): { kyc_id, status, risk_score }        — scrubbed
+    onboard-customer: func(req: generic-input) -> result<list<u8>, string>;
+
+    /// Execute the customer's first payment.
+    /// Input  (JSON): { invoice_id, amount, currency?, reference? } — no PII
+    /// Output (JSON): { payment_id, status, iban_sha256 }           — scrubbed
+    pay-invoice: func(req: generic-input) -> result<list<u8>, string>;
+}
