@@ -6,6 +6,7 @@ rail.log
 agent-output.log
 .env
 .env.local
+.contract-record.json
 *.local
 .DS_Store
 Thumbs.db

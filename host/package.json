@@ -4,9 +4,21 @@
   "private": true,
   "type": "module",
   "engines": { "node": ">=18" },
-  "scripts": { "demo": "tsx src/run-demo.ts" },
+  "scripts": {
+    "connect": "tsx src/connect.ts",
+    "register": "tsx src/register.ts",
+    "grant": "tsx src/grant.ts",
+    "demo": "tsx src/run-demo.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
     "@terminal3/t3n-sdk": "5.5.0",
-    "tsx": "^4.19.2"
+    "tsx": "^4.23.13"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "typescript": "5.9.3",
+    "vitest": "^4.1.11"
   }
 }
