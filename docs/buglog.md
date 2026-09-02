@@ -136,6 +136,29 @@ InsufficientCreditError: InsufficientCredit (account=f663b6d4005efe2ecac5a9486b5
 - Status: confirmed
 - Suggested fix: SDK should not write the module source / padding to stdout on error paths
 
+### BUG-008 — agent-auth-update (tee:user/contracts) writes succeed but NO LONGER arm egress on testnet — egress is enforced only from the modern member-delegation document (docs drift, Decision D2)
+- Date: 2026-09-02
+- Area: docs/SDK (delegation surface drift)
+- Docs URL: https://docs.terminal3.io/developers/adk/overview/agent-auth-adk (walkthrough still shows agent-auth-update as THE grant write)
+- Environment: @terminal3/t3n-sdk 5.5.0, testnet, contract z:8e3547bce411fd4f51fe1f25df033d83acccc869:mandate-contracts (id 862)
+- Step / command: user session signs `agent-auth-update` on `tee:user/contracts` with `allowedHosts: ["localhost:8787"]`, then agent invokes `onboard-customer` → `contract error: onboard-customer: egress denied for host localhost`. Repeated with `allowedHosts: ["localhost"]` → identical denial. The legacy write itself succeeds (no error) — it just has no effect on egress.
+- Expected: the documented agent-auth-update grant arms egress for the named contract/functions/host.
+- Actual: egress is resolved from the MODERN `member-delegation` document on `tee:authorisations/contracts` (SelfOnly, metered ~1e10/op). Writing it via SDK `updateMemberDelegation(BoundGrant {grantee, contract_id, functions, scopes, version_req, allowed_hosts})` (snake_case wire shape, no casing transform) arms egress as documented.
+- Severity: high for anyone following the current walkthrough (docs = scoring surface)
+- Status: confirmed (live, 2026-09-02); workaround: dual-surface grant — host/src/grant.ts writes legacy (docs parity, best-effort) + modern (functional); revoke = full-doc `member-delegation-update` with `{grants: [], discover_dids: []}`.
+- Suggested fix: docs should mark agent-auth-update deprecated-with-no-effect and standardize on the member-delegation surface (or the platform should keep legacy writes authoritative during the deprecation window).
+
+### BUG-009 — Egress allowlist matches host WITHOUT the port: an entry `localhost:8787` never matches `http://localhost:8787` (denial names the bare host)
+- Date: 2026-09-02
+- Area: platform/docs (egress matching semantics)
+- Docs URL: https://docs.terminal3.io/developers/adk/tips/outbound-http-auth-by-user (host allowlist examples)
+- Environment: @terminal3/t3n-sdk 5.5.0, testnet, z-mandate contract (RAIL_BASE http://localhost:8787)
+- Step / command: grant `allowedHosts: ["localhost:8787"]` → invoke → `egress denied for host localhost`; grant `allowedHosts: ["localhost"]` → still denied under the LEGACY surface (see BUG-008), allowed under the modern member-delegation surface. Error text always names the port-less host.
+- Expected: `host:port` entry matches `http://host:port` egress.
+- Actual: comparison is against the bare host portion of the URL (`localhost`), so entries must be host-only (`localhost`), and the denial error does not reveal which entry was attempted.
+- Severity: medium (silent misconfiguration — grant writes succeed, calls deny)
+- Status: confirmed (live); workaround: host-only entries (`localhost`); default in host/src/grant.ts.
+- Suggested fix: either match host:port when the URL carries a port, or document + validate host-only entries (and include the attempted host:port in the denial string).
 
 ## Pre-seeded candidates (unverified — confirm on live testnet during the walkthrough)
 
@@ -149,7 +172,7 @@ These come from the research dossiers in `docs/research/`; each must be confirme
 6. [x] VERIFIED: getAuditEvents() is a working typed method; returns AuditPage (empty here because z-tenant-flight never calls logging::audit) 'reported to exist but undocumented'; it IS a typed T3nClient method in 5.5.0.
 7. [x] VERIFIED indirectly: z-tenant-flight hex-encodes tenant_did() and its secrets read works on live testnet: docs warn the contract's tenant_did() returns raw bytes and must be hex-encoded before building z-prefixed tid paths; missing OR double hex-encoding both produce a path that matches nothing.
 8. [x] VERIFIED: explicit readers/writers={only:[contractId]} map created and readable; status active: maps.create without explicit readers creates a map nobody (not even the owner's contract) can read, with no error (silent deny-all; only a console.warn).
-9. [ ] NOT EXERCISED (single registration; docs statement stands) at the same tail with no API to fetch the tail's current id — stale map ACLs possible after re-registering (docs admit the gap).
+9. [x] VERIFIED + WORKAROUNDED: re-registering the same tenant allocates a NEW contract_id (856 → 862 for z-mandate) with no API to fetch the tail's current id — the existing secrets-map ACL stayed pinned to the old id; tenant.maps.update("secrets", {readers/writers:{only:[newId]}}) re-points it (host/src/register.ts ensureSecretsMap → 'updated'), verified live 2026-09-02.
 10. [~] PARTIALLY VERIFIED: first_name/last_name resolve; date_of_birth missing from profile; iban/swift/legal_name unconfirmed — D1 stays OPEN: {{profile.iban}}, {{profile.swift_bic}}, {{profile.legal_name}} are NOT in the documented profile fields (docs list first_name, last_name, date_of_birth, gender, verified_contacts.email.value). Verify against the live cluster; decide marker strategy.
 
 ## Local environment findings (NOT T3N bugs — for the handover note)
