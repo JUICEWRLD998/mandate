@@ -177,6 +177,34 @@ export function buildPayCall(
 }
 
 /**
+ * Run ONE demo step through the agent session: `onboard-customer`.
+ * No try/catch — errors propagate (see runDemoSteps).
+ */
+export async function runKyc(
+  agent: ExecuteClient,
+  record: { name: string; version: string },
+  customerId: string
+): Promise<KycVerdict> {
+  return agent.executeAndDecode<KycVerdict>(
+    buildKycCall(record, customerId) as ExecuteCall
+  );
+}
+
+/**
+ * Run ONE demo step through the agent session: `pay-invoice`.
+ * No try/catch — errors propagate (see runDemoSteps).
+ */
+export async function runPay(
+  agent: ExecuteClient,
+  record: { name: string; version: string },
+  opts: { invoiceId: string; amount: string; currency?: string }
+): Promise<PayVerdict> {
+  return agent.executeAndDecode<PayVerdict>(
+    buildPayCall(record, opts) as ExecuteCall
+  );
+}
+
+/**
  * Run the two demo steps through the agent session, in order:
  * onboard-customer → pay-invoice.
  *
@@ -191,16 +219,12 @@ export async function runDemoSteps(
   record: { name: string; version: string },
   opts: DemoOptions
 ): Promise<{ kyc: KycVerdict; pay: PayVerdict }> {
-  const kyc = await agent.executeAndDecode<KycVerdict>(
-    buildKycCall(record, opts.customerId) as ExecuteCall
-  );
-  const pay = await agent.executeAndDecode<PayVerdict>(
-    buildPayCall(record, {
-      invoiceId: opts.invoiceId,
-      amount: opts.amount,
-      currency: opts.currency,
-    }) as ExecuteCall
-  );
+  const kyc = await runKyc(agent, record, opts.customerId);
+  const pay = await runPay(agent, record, {
+    invoiceId: opts.invoiceId,
+    amount: opts.amount,
+    currency: opts.currency,
+  });
   return { kyc, pay };
 }
 
@@ -279,8 +303,13 @@ function auditPane(
   };
 }
 
+export type DemoMode = "all" | "kyc" | "pay";
+
 /**
- * Orchestration entry point (run via `npx tsx src/run-demo.ts`).
+ * Orchestration entry point (run via `npx tsx src/run-demo.ts [mode] [flags]`).
+ * mode: `kyc` (onboard-customer only) · `pay` (pay-invoice only + magic-moment
+ * pane + audit) · `all` (default, both steps) — the Phase 5 demo script drives
+ * kyc-only (Beat 1) and pay-only (Beat 4, post-revoke denial) modes.
  * Requires host/.env (T3N_API_KEY/AGENT_KEY/USER_KEY), a prior
  * `npm run register` (.contract-record.json) and, for egress to succeed,
  * the Phase 4 mock rail on localhost:8787 — the rail preflight warns but
@@ -288,7 +317,11 @@ function auditPane(
  */
 export async function main(): Promise<void> {
   try {
-    const opts = parseArgs(process.argv.slice(2));
+    const args = process.argv.slice(2);
+    const mode: DemoMode =
+      args[0] === "kyc" || args[0] === "pay" ? args[0] : "all";
+    const flagArgs = mode === "all" ? args : args.slice(1);
+    const opts = parseArgs(flagArgs);
 
     const { agent } = await connectAll();
 
@@ -314,42 +347,40 @@ export async function main(): Promise<void> {
       );
     }
 
-    // Step 1 — onboard-customer.
-    const kyc = await agent.client.executeAndDecode<KycVerdict>(
-      buildKycCall(record, opts.customerId) as ExecuteCall
-    );
-    console.log("KYC verdict:", JSON.stringify(kyc));
+    // Step 1 (kyc | all) — onboard-customer.
+    if (mode === "kyc" || mode === "all") {
+      const kyc = await runKyc(agent.client, record, opts.customerId);
+      console.log("KYC verdict:", JSON.stringify(kyc));
+      writeAgentLog({
+        step: "kyc",
+        input: { customer_id: opts.customerId },
+        verdict: kyc,
+      });
+    }
 
-    // Step 2 — pay-invoice, then the "magic moment" pane.
-    const pay = await agent.client.executeAndDecode<PayVerdict>(
-      buildPayCall(record, {
+    // Step 2 (pay | all) — pay-invoice, then the "magic moment" pane + audit.
+    if (mode === "pay" || mode === "all") {
+      const pay = await runPay(agent.client, record, {
         invoiceId: opts.invoiceId,
         amount: opts.amount,
         currency: opts.currency,
-      }) as ExecuteCall
-    );
-    console.log("Pay verdict:", JSON.stringify(pay));
-    console.log("AGENT view (markers, never plaintext):");
-    console.log(JSON.stringify(PAY_BODY_TEMPLATE));
-    console.log("RAIL received the resolved values — see rail.log");
-    console.log("iban_sha256 (proof): " + pay.iban_sha256);
+      });
+      console.log("Pay verdict:", JSON.stringify(pay));
+      console.log("AGENT view (markers, never plaintext):");
+      console.log(JSON.stringify(PAY_BODY_TEMPLATE));
+      console.log("RAIL received the resolved values — see rail.log");
+      console.log("iban_sha256 (proof): " + pay.iban_sha256);
+      writeAgentLog({
+        step: "pay",
+        input: { invoice_id: opts.invoiceId, amount: opts.amount },
+        verdict: pay,
+      });
+      writeAgentLog({ step: "agent-view", template: PAY_BODY_TEMPLATE });
 
-    // Audit pane — compact {ok, summary} only; never dump the full raw page.
-    const audit = await fetchAuditEvents(agent.client, 10);
-    console.log("Audit pane:", JSON.stringify(auditPane(audit)));
-
-    // Agent-side ledger: ids / amounts / markers only, never PII.
-    writeAgentLog({
-      step: "kyc",
-      input: { customer_id: opts.customerId },
-      verdict: kyc,
-    });
-    writeAgentLog({
-      step: "pay",
-      input: { invoice_id: opts.invoiceId, amount: opts.amount },
-      verdict: pay,
-    });
-    writeAgentLog({ step: "agent-view", template: PAY_BODY_TEMPLATE });
+      // Audit pane — compact {ok, summary} only; never dump the full raw page.
+      const audit = await fetchAuditEvents(agent.client, 10);
+      console.log("Audit pane:", JSON.stringify(auditPane(audit)));
+    }
 
     console.log("logs at host/agent-output.log (+ rail.log Phase 4)");
   } catch (err) {
