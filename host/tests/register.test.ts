@@ -10,6 +10,8 @@ import {
   registerContract,
   resolveWasmPath,
   seedRailApiKey,
+  seedRailBeneficiary,
+  seedRailUrl,
 } from "../src/register.js";
 
 /** Scratch file under the OS tmpdir; always cleaned up in a finally. */
@@ -21,7 +23,7 @@ function tmpWasmFile(tag: string, bytes: Uint8Array): string {
 
 describe("register.ts", () => {
   it("module imports cleanly (gated main runs nothing on import)", () => {
-    expect(CONTRACT_VERSION).toBe("0.1.0");
+    expect(CONTRACT_VERSION).toBe("0.3.0");
   });
 
   describe("resolveWasmPath", () => {
@@ -175,6 +177,59 @@ describe("register.ts", () => {
         key: "rail_api_key",
         value: "sk-rail-live-123",
       });
+    });
+  });
+
+  describe("seedRailUrl", () => {
+    it("seeds rail_url via executeControl so the contract dials the public rail", async () => {
+      const executeControl = vi.fn().mockResolvedValue(undefined);
+      const tenant = {
+        canonicalName: (t: string) => "z:deadbeef:" + t,
+        executeControl,
+      } as unknown as TenantClient;
+
+      await seedRailUrl(tenant, "https://demo.lhr.life");
+
+      expect(executeControl).toHaveBeenCalledTimes(1);
+      expect(executeControl).toHaveBeenCalledWith("map-entry-set", {
+        map_name: "z:deadbeef:secrets",
+        key: "rail_url",
+        value: "https://demo.lhr.life",
+      });
+    });
+  });
+
+  describe("seedRailBeneficiary", () => {
+    it("seeds valid JSON beneficiary config via executeControl", async () => {
+      const executeControl = vi.fn().mockResolvedValue(undefined);
+      const tenant = {
+        canonicalName: (t: string) => "z:deadbeef:" + t,
+        executeControl,
+      } as unknown as TenantClient;
+
+      await seedRailBeneficiary(
+        tenant,
+        '{"legal_name":"Ada Bank","iban":"GB29 NWBK 6016 1331 9268 19","swift":"NWBKGB2L"}'
+      );
+
+      expect(executeControl).toHaveBeenCalledTimes(1);
+      expect(executeControl).toHaveBeenCalledWith("map-entry-set", {
+        map_name: "z:deadbeef:secrets",
+        key: "rail_beneficiary",
+        value:
+          '{"legal_name":"Ada Bank","iban":"GB29 NWBK 6016 1331 9268 19","swift":"NWBKGB2L"}',
+      });
+    });
+
+    it("rejects malformed JSON before any control-plane call", async () => {
+      const executeControl = vi.fn().mockResolvedValue(undefined);
+      const tenant = {
+        canonicalName: (t: string) => "z:deadbeef:" + t,
+        executeControl,
+      } as unknown as TenantClient;
+
+      await expect(seedRailBeneficiary(tenant, "{not json")).rejects.toThrow();
+      expect(executeControl).not.toHaveBeenCalled();
     });
   });
 });

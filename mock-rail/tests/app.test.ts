@@ -33,7 +33,8 @@ describe("mock rail app", () => {
     const { app, entries } = makeHarness();
     const body = {
       customer_id: "cus_1",
-      legal_name: "Ada Bank",
+      first_name: "Ada",
+      last_name: "Bank",
       date_of_birth: "1990-01-15",
     };
     const res = await request(app).post("/kyc").send(body);
@@ -51,10 +52,12 @@ describe("mock rail app", () => {
     expect(entries[0].endpoint).toBe("/kyc");
     const payload = entries[0].payload as {
       customer_id: string;
-      legal_name: string;
+      first_name: string;
+      last_name: string;
       date_of_birth: string;
     };
-    expect(payload.legal_name).toBe("Ada Bank");
+    expect(payload.first_name).toBe("Ada");
+    expect(payload.last_name).toBe("Bank");
     expect(payload.date_of_birth).toBe("1990-01-15");
   });
 
@@ -62,7 +65,7 @@ describe("mock rail app", () => {
     const { app } = makeHarness();
     const res = await request(app)
       .post("/kyc")
-      .send({ customer_id: "cus_1", legal_name: "Ada Bank" });
+      .send({ customer_id: "cus_1", first_name: "Ada", last_name: "Bank" });
     expect(res.status).toBe(400);
     expect(JSON.stringify(res.body)).toContain("date_of_birth");
   });

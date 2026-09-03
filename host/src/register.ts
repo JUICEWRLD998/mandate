@@ -8,9 +8,9 @@ import { saveContractRecord } from "./lib/records.js";
 /**
  * Contract version registered on the node. Bump in lockstep with
  * contract/src/lib.rs CONTRACT_VERSION and wit/world.wit
- * (package z:mandate@0.1.0) — the node keys registrations by tail + version.
+ * (package z:mandate@0.3.0) — the node keys registrations by tail + version.
  */
-export const CONTRACT_VERSION = "0.1.0";
+export const CONTRACT_VERSION = "0.3.0";
 
 /**
  * Local mirror of the SDK's `ContractRegisterResult` (field names verified
@@ -130,20 +130,60 @@ export async function ensureSecretsMap(
 }
 
 /**
- * Seed `rail_api_key` into the canonical z:<tid>:secrets map via the tenant
- * control plane (map-entry-set). The control plane bypasses ACLs — the only
- * path to the key afterwards is the contract code itself, because the map's
+ * Seed one key into the canonical z:<tid>:secrets map via the tenant control
+ * plane (map-entry-set). The control plane bypasses ACLs — the only path to
+ * the values afterwards is the contract code itself, because the map's
  * readers are contract-only.
  */
+export async function seedSecret(
+  tenant: TenantClient,
+  key: string,
+  value: string
+): Promise<void> {
+  await tenant.executeControl("map-entry-set", {
+    map_name: tenant.canonicalName("secrets"),
+    key,
+    value,
+  });
+}
+
+/** Seed `rail_api_key` — the Authorization bearer the contract sends on egress. */
 export async function seedRailApiKey(
   tenant: TenantClient,
   apiKeyValue: string
 ): Promise<void> {
-  await tenant.executeControl("map-entry-set", {
-    map_name: tenant.canonicalName("secrets"),
-    key: "rail_api_key",
-    value: apiKeyValue,
-  });
+  await seedSecret(tenant, "rail_api_key", apiKeyValue);
+}
+
+/**
+ * Seed `rail_url` — the contract's egress target, resolved at call time via
+ * `crate::rail_base()`. MUST be a PUBLIC URL reachable from the T3N node's
+ * enclave (loopback is never reachable from the enclave — live-verified
+ * 2026-09-03); local dev that omits it falls back to the contract's
+ * `RAIL_BASE` localhost constant.
+ */
+export async function seedRailUrl(
+  tenant: TenantClient,
+  railUrl: string
+): Promise<void> {
+  await seedSecret(tenant, "rail_url", railUrl);
+}
+
+/**
+ * Seed `rail_beneficiary` — the sealed JSON payment config
+ * ({legal_name, iban, swift}) the contract reads inside the enclave for the
+ * /pay egress (Decision D1: the profile schema cannot carry bank fields —
+ * live-verified 2026-09-03; the docs' payroll model stores payment info once
+ * in T3N). The TS host only ever holds the env value at seed time; the value
+ * lives in the contract-only secrets map afterwards.
+ */
+export async function seedRailBeneficiary(
+  tenant: TenantClient,
+  json: string
+): Promise<void> {
+  // Validate JSON before seeding — a malformed value would fail every pay.
+  JSON.parse(json);
+  await seedSecret(tenant, "rail_beneficiary", json);
 }
 
 /**
@@ -182,6 +222,11 @@ async function main(): Promise<void> {
     tenant,
     process.env.RAIL_API_KEY ?? requireEnv("RAIL_API_KEY")
   );
+  await seedRailUrl(
+    tenant,
+    process.env.RAIL_URL ?? "http://localhost:8787"
+  );
+  await seedRailBeneficiary(tenant, requireEnv("RAIL_BENEFICIARY"));
 
   saveContractRecord({
     contract_id,
@@ -196,7 +241,7 @@ async function main(): Promise<void> {
     `contract registered: id=${contract_id} name=${name} (tail=${tail} v${CONTRACT_VERSION})`
   );
   console.log(`secrets map: ${mapState} (contract-only readers/writers)`);
-  console.log("rail_api_key seeded via control plane (map-entry-set)");
+  console.log("rail_api_key + rail_url + rail_beneficiary seeded via control plane");
   console.log("record saved to host/.contract-record.json");
   console.log("next: npm run grant");
 }

@@ -1,20 +1,27 @@
 //! pay.rs — `pay-invoice` for z-mandate (Phase 2 implementation).
 //!
 //! The MANDATE "magic moment": the contract POSTs the beneficiary's REAL bank
-//! details to the mock money rail — yet the contract itself never holds the
-//! plaintext. The beneficiary legal name / IBAN / SWIFT-BIC enter the outbound
-//! body ONLY as `{{profile.*}}` markers (crate::MARKER_LEGAL_NAME,
-//! crate::MARKER_IBAN, crate::MARKER_SWIFT); the host's
-//! `http-with-placeholders` interface substitutes the calling user's profile
-//! values inside the enclave at dispatch time (Decision D1, see lib.rs).
+//! details to the mock money rail — yet neither the TS host nor the LLM ever
+//! sees the plaintext. Decision D1 (resolved live 2026-09-03) proved the
+//! cluster's profile schema CANNOT carry bank fields (user-upsert rejects
+//! `iban`/`legal_name`/`swift_bic` as unrecognized keys), so the beneficiary
+//! payment config travels per the docs' own payroll model: stored ONCE by the
+//! enterprise in the sealed `rail_beneficiary` secret (z:<tid>:secrets) and
+//! read inside the TDX enclave at call time. The outbound body therefore
+//! carries:
+//!   - beneficiary values from the sealed KV config (never outside the TEE),
+//!   - the payer's contact as a REAL schema-backed placeholder
+//!     (`{{profile.verified_contacts.email.value}}`), substituted by the host
+//!     inside the enclave just before egress — plaintext never in WASM.
 //!
 //! PII contract:
 //!   - `PayReq` carries NO PII-named fields (no iban / beneficiary /
-//!     legal_name / name — those arrive only as markers) and
-//!     `deny_unknown_fields`, so an input smuggling inline bank details is
-//!     rejected at parse time ("bad input: unknown field ...").
+//!     legal_name / name) and `deny_unknown_fields`, so an input smuggling
+//!     inline bank details is rejected at parse time ("bad input: unknown
+//!     field ...").
 //!   - `amount` is a DECIMAL STRING ("199.00"), never f64 (money safety).
-//!   - outbound body = markers only; never literal bank data.
+//!   - outbound body = sealed-KV beneficiary + markers; never literal bank
+//!     data from the request or the host.
 //!   - rail responses are parsed into the scrubbed `PayVerdict`; `trace` and
 //!     any other/unknown keys are ignored and never forwarded.
 //!   - the raw rail response body is NEVER returned, logged, or echoed into
@@ -72,11 +79,12 @@ pub fn pay_invoice(input: &[u8]) -> Result<Vec<u8>, String> {
     }
 }
 
-/// Build the rail POST /pay body. Markers ONLY — the real beneficiary bank
-/// details are substituted host-side from the calling user's profile via
-/// http-with-placeholders after this contract serialises the body. Never
-/// literal bank data.
-fn build_pay_body(req: &PayReq) -> serde_json::Value {
+/// Build the rail POST /pay body. The beneficiary bank details come from the
+/// SEALED KV config (`RailBeneficiary`, read inside the enclave — never from
+/// the request or the TS host), while the payer contact is a real schema-
+/// backed placeholder the host substitutes at egress. Never literal bank data
+/// from the caller.
+fn build_pay_body(req: &PayReq, ben: &crate::RailBeneficiary) -> serde_json::Value {
     let currency = req.currency.clone().unwrap_or_else(|| "GBP".to_string());
     let reference = req
         .reference
@@ -84,10 +92,11 @@ fn build_pay_body(req: &PayReq) -> serde_json::Value {
         .unwrap_or_else(|| req.invoice_id.clone());
     serde_json::json!({
         "beneficiary": {
-            "legal_name": crate::MARKER_LEGAL_NAME,
-            "iban": crate::MARKER_IBAN,
-            "swift": crate::MARKER_SWIFT,
+            "legal_name": ben.legal_name,
+            "iban": ben.iban,
+            "swift": ben.swift,
         },
+        "customer_email": crate::MARKER_EMAIL,
         "amount": req.amount,
         "currency": currency,
         "reference": reference,
@@ -128,12 +137,14 @@ fn parse_pay_verdict(bytes: &[u8]) -> Result<PayVerdict, String> {
 #[cfg(target_arch = "wasm32")]
 use crate::host::interfaces::{http_with_placeholders as hwp, logging};
 
-/// Thin wasm-only driver: read the sealed rail key, POST the marker body to
-/// the rail, enforce the scrub/guard rules. Mirrors booking::book_offer_wasm.
+/// Thin wasm-only driver: read the sealed rail key + beneficiary config, POST
+/// the body to the rail, enforce the scrub/guard rules. Mirrors
+/// booking::book_offer_wasm.
 #[cfg(target_arch = "wasm32")]
 fn pay_invoice_wasm(req: &PayReq) -> Result<PayVerdict, String> {
     let api_key = crate::get_rail_api_key()?;
-    let body = build_pay_body(req);
+    let ben = crate::get_rail_beneficiary()?;
+    let body = build_pay_body(req, &ben);
 
     // Log ONLY the invoice_id — never amount, currency, or body content.
     let _ = logging::info(&alloc::format!(
@@ -143,7 +154,7 @@ fn pay_invoice_wasm(req: &PayReq) -> Result<PayVerdict, String> {
 
     let resp = hwp::call(&hwp::Request {
         method: hwp::Verb::Post,
-        url: alloc::format!("{}/pay", crate::RAIL_BASE),
+        url: alloc::format!("{}/pay", crate::rail_base()?),
         headers: Some(crate::rail_headers(&api_key)),
         payload: Some(serde_json::to_vec(&body).map_err(|e| e.to_string())?),
     })
@@ -170,6 +181,16 @@ mod tests {
 
     fn parse_req(v: serde_json::Value) -> PayReq {
         serde_json::from_value(v).unwrap()
+    }
+
+    /// Test-only beneficiary fixture (fixture-PII policy: #[cfg(test)] is
+    /// exempt from the repo plaintext scan).
+    fn ben_fixture() -> crate::RailBeneficiary {
+        crate::RailBeneficiary {
+            legal_name: "Ada Bank".to_string(),
+            iban: "GB29 NWBK 6016 1331 9268 19".to_string(),
+            swift: "NWBKGB2L".to_string(),
+        }
     }
 
     #[test]
@@ -220,20 +241,29 @@ mod tests {
     }
 
     #[test]
-    fn build_pay_body_is_markers_only() {
+    fn build_pay_body_carries_sealed_beneficiary_and_email_marker_only() {
         let req = parse_req(serde_json::json!({
             "invoice_id": "inv_1",
             "amount": "199.00",
         }));
-        let body = build_pay_body(&req);
-        assert_eq!(body["beneficiary"]["iban"], "{{profile.iban}}");
-        assert_eq!(body["beneficiary"]["swift"], "{{profile.swift_bic}}");
-        assert_eq!(body["beneficiary"]["legal_name"], "{{profile.legal_name}}");
+        let body = build_pay_body(&req, &ben_fixture());
+        assert_eq!(body["beneficiary"]["iban"], "GB29 NWBK 6016 1331 9268 19");
+        assert_eq!(body["beneficiary"]["swift"], "NWBKGB2L");
+        assert_eq!(body["beneficiary"]["legal_name"], "Ada Bank");
+        assert_eq!(
+            body["customer_email"],
+            "{{profile.verified_contacts.email.value}}"
+        );
         let s = body.to_string();
-        assert!(s.contains("{{profile."), "body must carry markers: {s}");
-        assert!(!s.contains("GB29"), "no plaintext IBAN: {s}");
-        assert!(!s.contains("NWBKGB2L"), "no plaintext SWIFT: {s}");
-        assert!(!s.contains("Ada Bank"), "no plaintext name: {s}");
+        assert!(s.contains("{{profile."), "body must carry the email marker: {s}");
+        assert!(
+            !s.contains("{{profile.iban}}"),
+            "no bank markers — iban is not a schema-backed profile field (D1): {s}"
+        );
+        assert!(
+            !s.contains("{{profile.legal_name}}"),
+            "no legal_name marker — sealed KV supplies it: {s}"
+        );
     }
 
     #[test]
@@ -242,7 +272,7 @@ mod tests {
             "invoice_id": "inv_42",
             "amount": "199.00",
         }));
-        let body = build_pay_body(&req);
+        let body = build_pay_body(&req, &ben_fixture());
         assert_eq!(body["amount"], "199.00");
         assert_eq!(body["currency"], "GBP");
         assert_eq!(body["reference"], "inv_42");
@@ -253,7 +283,7 @@ mod tests {
             "currency": "EUR",
             "reference": "PO-42",
         }));
-        let body_explicit = build_pay_body(&req_explicit);
+        let body_explicit = build_pay_body(&req_explicit, &ben_fixture());
         assert_eq!(body_explicit["currency"], "EUR");
         assert_eq!(body_explicit["reference"], "PO-42");
     }

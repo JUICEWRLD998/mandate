@@ -33,6 +33,24 @@ const DEFAULT_FUNCTIONS = ["onboard-customer", "pay-invoice"];
 /** Default egress host — host WITHOUT port (live-verified match semantics). */
 const DEFAULT_HOSTS = ["localhost"];
 
+/**
+ * Default egress host list for a bare `grant`: the RAIL_URL host when set
+ * (the rail sits at a PUBLIC url for enclave egress — see register.ts
+ * seedRailUrl), else `localhost` for local/dev runs. Scheme and port are
+ * stripped — the enclave matches host-only (live-verified 2026-09-02/03).
+ */
+export function defaultHosts(): string[] {
+  const url = process.env.RAIL_URL;
+  if (url) {
+    try {
+      return [new URL(url).hostname];
+    } catch {
+      // fall through — unparseable RAIL_URL should not break the grant
+    }
+  }
+  return [...DEFAULT_HOSTS];
+}
+
 /** Legacy (docs-surface) grants contract. */
 const LEGACY_GRANTS_CONTRACT = "tee:user/contracts";
 /** Modern (functional, metered) delegation contract. */
@@ -68,7 +86,7 @@ export function parseFunctionsArg(raw: string | undefined): string[] {
  * → `localhost` (matches the contract's RAIL_BASE); a blank CSV throws.
  */
 export function parseHostsArg(raw: string | undefined): string[] {
-  if (raw === undefined) return [...DEFAULT_HOSTS];
+  if (raw === undefined) return defaultHosts();
   const hosts = raw
     .split(",")
     .map((entry) => entry.trim())

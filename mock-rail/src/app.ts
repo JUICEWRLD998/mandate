@@ -5,8 +5,9 @@
  * the enclave never holds plaintext, the rail does — so every request is
  * logged VERBATIM (resolved {{profile.*}} values included) via the injected
  * RailLogger (real impl → rail.log, gitignored; tests → in-memory capture),
- * while every RESPONSE is scrubbed: no legal_name / date_of_birth / iban /
- * swift / amount is ever echoed back toward the enclave.
+ * while every RESPONSE is scrubbed: no first_name / last_name /
+ * date_of_birth / iban / swift / amount is ever echoed back toward the
+ * enclave.
  *
  * The rail does not enforce auth — but the Authorization header (Bearer
  * <rail_api_key> from KV) IS recorded in each log entry, because the demo
@@ -79,7 +80,8 @@ export function createRailApp(logger: RailLogger): express.Express {
     }
     const missing = firstMissingString(req.body, [
       "customer_id",
-      "legal_name",
+      "first_name",
+      "last_name",
       "date_of_birth",
     ]);
     if (missing !== undefined) {

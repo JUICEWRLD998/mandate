@@ -45,22 +45,19 @@ export interface PayVerdict {
 }
 
 /**
- * The EXACT body the CONTRACT sends to the mock money rail (mirror of
- * contract/src/pay.rs `build_pay_body` — keep in sync with that function).
- *
- * Shown side-by-side in the demo's "magic moment": the agent's view is these
- * literal {{profile.*}} markers, while the rail's log (rail.log, Phase 4)
- * shows the values the enclave substituted at egress. BEAT 5 greps
- * host/agent-output.log: markers MUST appear, plaintext bank data MUST NOT.
+ * The AGENT'S VIEW of the /pay egress (mirrors contract/src/pay.rs
+ * `build_pay_body` — keep in sync): the beneficiary bank config is SEALED
+ * (read by the contract from z:<tid>:secrets inside the enclave — the agent
+ * never constructs or sees it), and the payer contact rides as a real
+ * schema-backed marker substituted at egress. Shown side-by-side with
+ * rail.log in the demo's "magic moment": the agent holds markers + the
+ * iban_sha256 digest; the rail holds the resolved values.
  *
  * NEVER put real values in here — markers only, by construction.
  */
 export const PAY_BODY_TEMPLATE: Record<string, unknown> = {
-  beneficiary: {
-    legal_name: "{{profile.legal_name}}",
-    iban: "{{profile.iban}}",
-    swift: "{{profile.swift_bic}}",
-  },
+  beneficiary: "sealed z:<tid>:secrets rail_beneficiary (resolved inside the enclave)",
+  customer_email: "{{profile.verified_contacts.email.value}}",
   amount: "<amount>",
   currency: "<currency>",
   reference: "<reference>",
@@ -125,12 +122,20 @@ export function parseArgs(argv: string[]): DemoOptions {
  * The execute wire call. contract_id is the CANONICAL z: name and
  * contract_version a real SemVer (never "latest") — wire fields are
  * contract_id / contract_version / function_name, NOT contract/version/function.
+ *
+ * `pii_did` binds the DELEGATION SUBJECT: the data-owner USER whose grant
+ * authorizes the agent's egress and whose profile feeds `{{profile.*}}`
+ * placeholder resolution. Without it the call is SelfOnly — the node checks
+ * the AGENT's own (empty) authorisation doc and every egress is denied, even
+ * with a correct user-signed member-delegation grant (live-verified
+ * 2026-09-03: "egress denied for host localhost" until pii_did was bound).
  */
 export interface ExecuteCall {
   contract_id: string;
   contract_version: string;
   function_name: string;
   input: Record<string, unknown>;
+  pii_did?: string;
 }
 
 /** Structural execute client — any object with this method satisfies it (vitest mocks do). */
@@ -138,17 +143,23 @@ export type ExecuteClient = {
   executeAndDecode<T>(call: ExecuteCall): Promise<T>;
 };
 
-/** Build the `onboard-customer` execute call. PII-free: customer_id only. */
+/**
+ * Build the `onboard-customer` execute call. PII-free: customer_id only.
+ * `subjectDid` = the data-owner user DID (delegation subject) — see ExecuteCall.
+ */
 export function buildKycCall(
   record: { name: string; version: string },
-  customerId: string
+  customerId: string,
+  subjectDid?: string
 ): unknown {
-  return {
+  const call: Record<string, unknown> = {
     contract_id: record.name,
     contract_version: record.version,
     function_name: "onboard-customer",
     input: { customer_id: customerId },
   };
+  if (subjectDid !== undefined) call.pii_did = subjectDid;
+  return call;
 }
 
 /**
@@ -159,7 +170,8 @@ export function buildKycCall(
  */
 export function buildPayCall(
   record: { name: string; version: string },
-  opts: { invoiceId: string; amount: string; currency?: string }
+  opts: { invoiceId: string; amount: string; currency?: string },
+  subjectDid?: string
 ): unknown {
   const input: Record<string, unknown> = {
     invoice_id: opts.invoiceId,
@@ -168,45 +180,56 @@ export function buildPayCall(
   if (opts.currency !== undefined) {
     input.currency = opts.currency;
   }
-  return {
+  const call: Record<string, unknown> = {
     contract_id: record.name,
     contract_version: record.version,
     function_name: "pay-invoice",
     input,
   };
+  if (subjectDid !== undefined) call.pii_did = subjectDid;
+  return call;
 }
 
 /**
  * Run ONE demo step through the agent session: `onboard-customer`.
+ * `subjectDid` = the delegating data-owner user DID (see ExecuteCall).
  * No try/catch — errors propagate (see runDemoSteps).
  */
 export async function runKyc(
   agent: ExecuteClient,
   record: { name: string; version: string },
-  customerId: string
+  customerId: string,
+  subjectDid?: string
 ): Promise<KycVerdict> {
   return agent.executeAndDecode<KycVerdict>(
-    buildKycCall(record, customerId) as ExecuteCall
+    buildKycCall(record, customerId, subjectDid) as ExecuteCall
   );
 }
 
 /**
  * Run ONE demo step through the agent session: `pay-invoice`.
+ * `subjectDid` = the delegating data-owner user DID (see ExecuteCall).
  * No try/catch — errors propagate (see runDemoSteps).
  */
 export async function runPay(
   agent: ExecuteClient,
   record: { name: string; version: string },
-  opts: { invoiceId: string; amount: string; currency?: string }
+  opts: { invoiceId: string; amount: string; currency?: string },
+  subjectDid?: string
 ): Promise<PayVerdict> {
   return agent.executeAndDecode<PayVerdict>(
-    buildPayCall(record, opts) as ExecuteCall
+    buildPayCall(record, opts, subjectDid) as ExecuteCall
   );
 }
 
 /**
  * Run the two demo steps through the agent session, in order:
  * onboard-customer → pay-invoice.
+ *
+ * `subjectDid` = the delegating data-owner user DID — REQUIRED for egress:
+ * the node attributes the call to the SUBJECT's member-delegation doc, so a
+ * correct user-signed grant only arms egress when pii_did is bound (without
+ * it the agent's own doc is empty → "egress denied for host <host>").
  *
  * Deliberately has NO try/catch: egress denial
  * ("host/http.egress_denied: host ... is not in the authorised_hosts
@@ -217,14 +240,20 @@ export async function runPay(
 export async function runDemoSteps(
   agent: ExecuteClient,
   record: { name: string; version: string },
-  opts: DemoOptions
+  opts: DemoOptions,
+  subjectDid?: string
 ): Promise<{ kyc: KycVerdict; pay: PayVerdict }> {
-  const kyc = await runKyc(agent, record, opts.customerId);
-  const pay = await runPay(agent, record, {
-    invoiceId: opts.invoiceId,
-    amount: opts.amount,
-    currency: opts.currency,
-  });
+  const kyc = await runKyc(agent, record, opts.customerId, subjectDid);
+  const pay = await runPay(
+    agent,
+    record,
+    {
+      invoiceId: opts.invoiceId,
+      amount: opts.amount,
+      currency: opts.currency,
+    },
+    subjectDid
+  );
   return { kyc, pay };
 }
 
@@ -246,7 +275,7 @@ export async function fetchAuditEvents(
   client: AuditClient,
   limit = 10
 ): Promise<{ ok: true; raw: unknown } | { ok: false; error: string }> {
-  try {
+  const attempt = async (): Promise<{ ok: true; raw: unknown } | { ok: false; error: string }> => {
     const getAuditEvents = client.getAuditEvents;
     if (typeof getAuditEvents !== "function") {
       // Docs claim it is typed on 5.5.0 — a structurally-typed client without
@@ -255,11 +284,24 @@ export async function fetchAuditEvents(
     }
     const raw = await getAuditEvents({ limit });
     return { ok: true, raw };
+  };
+  try {
+    return await attempt();
   } catch (err) {
-    return {
-      ok: false,
-      error: err instanceof Error ? err.message : String(err),
-    };
+    // Live-observed (2026-09-03): the FIRST audit read immediately after a
+    // delegated execute can hit a node-side race (SDK throw reading a
+    // response field) that clears within ~hundreds of ms — the retry must
+    // NOT land in the same race window, so it waits briefly. Never fail the
+    // demo pane on a transient — retry once, then report honestly.
+    await new Promise((r) => setTimeout(r, 500));
+    try {
+      return await attempt();
+    } catch (err2) {
+      return {
+        ok: false,
+        error: err2 instanceof Error ? err2.message : String(err2),
+      };
+    }
   }
 }
 
@@ -323,7 +365,10 @@ export async function main(): Promise<void> {
     const flagArgs = mode === "all" ? args : args.slice(1);
     const opts = parseArgs(flagArgs);
 
-    const { agent } = await connectAll();
+    const { agent, user } = await connectAll();
+    // The agent executes FOR the data-owner user (delegation subject): binding
+    // user.did as pii_did on every call is what attributes egress + marker
+    // resolution to the user's member-delegation grant (see ExecuteCall).
 
     const record = loadContractRecord();
     if (!record) {
@@ -349,7 +394,7 @@ export async function main(): Promise<void> {
 
     // Step 1 (kyc | all) — onboard-customer.
     if (mode === "kyc" || mode === "all") {
-      const kyc = await runKyc(agent.client, record, opts.customerId);
+      const kyc = await runKyc(agent.client, record, opts.customerId, user.did);
       console.log("KYC verdict:", JSON.stringify(kyc));
       writeAgentLog({
         step: "kyc",
@@ -360,11 +405,16 @@ export async function main(): Promise<void> {
 
     // Step 2 (pay | all) — pay-invoice, then the "magic moment" pane + audit.
     if (mode === "pay" || mode === "all") {
-      const pay = await runPay(agent.client, record, {
-        invoiceId: opts.invoiceId,
-        amount: opts.amount,
-        currency: opts.currency,
-      });
+      const pay = await runPay(
+        agent.client,
+        record,
+        {
+          invoiceId: opts.invoiceId,
+          amount: opts.amount,
+          currency: opts.currency,
+        },
+        user.did
+      );
       console.log("Pay verdict:", JSON.stringify(pay));
       console.log("AGENT view (markers, never plaintext):");
       console.log(JSON.stringify(PAY_BODY_TEMPLATE));

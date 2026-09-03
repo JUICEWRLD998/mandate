@@ -23,7 +23,7 @@ extern crate alloc;
 
 /// Contract semantic version — must match the node's contract_version at
 /// registration. Bump in lockstep with wit/world.wit's package version.
-pub const CONTRACT_VERSION: &str = "0.1.0";
+pub const CONTRACT_VERSION: &str = "0.3.0";
 
 wit_bindgen::generate!({
     world: "mandate",
@@ -38,9 +38,16 @@ wit_bindgen::generate!({
 mod kyc;
 mod pay;
 
-/// Base URL of the mock money rail. The delegation grant's `allowedHosts`
-/// MUST name this host (`localhost:8787`) or every egress is denied with
-/// `host/http.egress_denied`. The Phase 4 mock rail listens here.
+/// Base URL of the mock money rail — the FALLBACK when no `rail_url` entry is
+/// seeded in the contract's secrets map. The delegation grant's `allowedHosts`
+/// MUST name the rail's host or every egress is denied with
+/// `host/http.egress_denied`.
+///
+/// LIVE-TESTNET FACT (verified 2026-09-03): the enclave runs on the T3N node,
+/// so `localhost`/loopback egress is NEVER reachable — the rail must sit at a
+/// PUBLIC URL (tunnel or deployed endpoint) and `rail_base()` resolves it from
+/// the `rail_url` secret seeded by the tenant. Local dev (no `rail_url` seeded)
+/// keeps this default.
 pub const RAIL_BASE: &str = "http://localhost:8787";
 
 /// Hard ceiling on inbound request bytes (reference crate uses the same guard;
@@ -51,31 +58,33 @@ pub const MAX_INPUT_BYTES: usize = 65_536;
 pub const MAX_RESP_BYTES: usize = 65_536;
 
 // ---------------------------------------------------------------------------
-// Marker strategy (Decision D1 — Phase 1 outcome, live-testnet verified)
+// Marker strategy (Decision D1 — RESOLVED LIVE 2026-09-03, see docs/buglog)
 // ---------------------------------------------------------------------------
-// Phase 1 (walkthrough executed 2026-09-01) PROVED on testnet:
-//   {{profile.first_name}} and {{profile.last_name}} resolve from the calling
-//   user's profile; {{profile.date_of_birth}} failed with `user profile
-//   missing field: date_of_birth` on the walkthrough profile (BUG-006: the
-//   demo profile simply did not carry it).
-//   {{profile.legal_name}}, {{profile.iban}}, {{profile.swift_bic}} are NOT in
-//   the docs' documented profile-field list and remain UNCONFIRMED — they
-//   resolve only if the demo user's profile (host Phase 3 user-upsert) carries
-//   the field AND the cluster's profile schema permits it for substitution.
-//
-// Strategy (reversible at ONE edit point — these consts):
-//   bodies template the markers below. A field whose marker fails to resolve
-//   at the first live registration (Phase 3/5 integration) is switched to the
-//   docs' own fallback: a DEMO-HARDCODED value supplied by the contract — the
-//   exact z-tenant-flight passport_number precedent — and the trade-off is
-//   documented in the README. Swap = change the const, not the call sites.
+// Live-testnet probe result on the cluster's profile schema (user-upsert via
+// submitUserInput, email-OTP-bound user DID):
+//   RESOLVES:  {{profile.first_name}} · {{profile.last_name}} ·
+//              {{profile.date_of_birth}} ·
+//              {{profile.verified_contacts.email.value}} (documented fields —
+//              the schema stores them and the enclave substitutes them)
+//   REJECTED:  the profile upsert REFUSES unrecognized keys with
+//              `Profile validation failed ... UnrecognizedKeys { keys:
+//              ["iban", "legal_name", "swift_bic"] }` — the cluster's profile
+//              schema is CLOSED and cannot carry bank-detail fields.
+// Strategy (the docs' own stated fallback — placeholders page: "Fields the
+// schema doesn't carry yet (passport, title) are supplied by your contract
+// directly", mirroring the payroll use-case where the enterprise stores
+// payment info once in T3N):
+//   - PERSON data (KYC beat) travels as the schema-backed markers above —
+//     plaintext never enters WASM memory.
+//   - PAYMENT config (beneficiary legal_name/iban/swift) is read at call time
+//     from the sealed `rail_beneficiary` secret in z:<tid>:secrets (seeded by
+//     the tenant control plane) — the plaintext exists only inside the TDX
+//     enclave during the egress, never in the TS host, the LLM, or the repo.
 // ---------------------------------------------------------------------------
 pub const MARKER_FIRST_NAME: &str = "{{profile.first_name}}";
 pub const MARKER_LAST_NAME: &str = "{{profile.last_name}}";
-pub const MARKER_LEGAL_NAME: &str = "{{profile.legal_name}}";
 pub const MARKER_DATE_OF_BIRTH: &str = "{{profile.date_of_birth}}";
-pub const MARKER_IBAN: &str = "{{profile.iban}}";
-pub const MARKER_SWIFT: &str = "{{profile.swift_bic}}";
+pub const MARKER_EMAIL: &str = "{{profile.verified_contacts.email.value}}";
 
 #[cfg(target_arch = "wasm32")]
 use crate::host::{
@@ -96,6 +105,49 @@ pub fn get_rail_api_key() -> Result<alloc::string::String, alloc::string::String
         .map_err(|e| alloc::format!("kv read: {e}"))?
         .ok_or("rail_api_key not found in z:<tid>:secrets — seed it via the tenant SDK (map-entry-set) before use")?;
     alloc::string::String::from_utf8(bytes).map_err(|e| e.to_string())
+}
+
+/// Resolve the rail base URL at call time: the `rail_url` secret in
+/// `z:<tid>:secrets` when seeded (public tunnel / deployed endpoint — the only
+/// reachable egress target from the enclave, see RAIL_BASE docs), else the
+/// local-dev `RAIL_BASE` fallback. Seeded by the tenant via control-plane
+/// `map-entry-set` alongside `rail_api_key`. A seeded-but-empty value also
+/// falls back (a blank rail_url must not produce a malformed outbound URL).
+#[cfg(target_arch = "wasm32")]
+pub fn rail_base() -> Result<alloc::string::String, alloc::string::String> {
+    let tid = tenant_context::tenant_did();
+    let map_name = alloc::format!("z:{}:secrets", hex::encode(&tid));
+    match kv_store::get(&map_name, b"rail_url") {
+        Ok(Some(bytes)) => match alloc::string::String::from_utf8(bytes) {
+            Ok(url) if !url.trim().is_empty() => Ok(url),
+            _ => Ok(RAIL_BASE.to_string()),
+        },
+        Ok(None) => Ok(RAIL_BASE.to_string()),
+        Err(e) => Err(alloc::format!("kv read: {e}")),
+    }
+}
+
+/// The rail-side beneficiary payment config, sealed in z:<tid>:secrets as
+/// `rail_beneficiary` JSON. Stored ONCE by the tenant (control-plane seed —
+/// the "enterprise stores its payment info once in T3N" model, docs payroll
+/// use-case); read inside the enclave at call time and placed into the
+/// outbound /pay body. The TS host and the LLM never see these values.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct RailBeneficiary {
+    pub legal_name: String,
+    pub iban: String,
+    pub swift: String,
+}
+
+/// KV helper for `RailBeneficiary` (wasm-only, mirrors get_rail_api_key).
+#[cfg(target_arch = "wasm32")]
+pub fn get_rail_beneficiary() -> Result<RailBeneficiary, alloc::string::String> {
+    let tid = tenant_context::tenant_did();
+    let map_name = alloc::format!("z:{}:secrets", hex::encode(&tid));
+    let bytes = kv_store::get(&map_name, b"rail_beneficiary")
+        .map_err(|e| alloc::format!("kv read: {e}"))?
+        .ok_or("rail_beneficiary not found in z:<tid>:secrets — seed it via the tenant SDK (map-entry-set) before use")?;
+    serde_json::from_slice(&bytes).map_err(|e| alloc::format!("rail_beneficiary not valid json: {e}"))
 }
 
 /// Render a typed `http-with-placeholders` error as a contract-facing string.
@@ -167,7 +219,7 @@ mod tests {
     }
 
     #[test]
-    fn contract_version_is_v0_1_0() {
-        assert_eq!(CONTRACT_VERSION, "0.1.0");
+    fn contract_version_is_v0_3_0() {
+        assert_eq!(CONTRACT_VERSION, "0.3.0");
     }
 }

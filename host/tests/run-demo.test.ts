@@ -62,6 +62,22 @@ describe("buildKycCall", () => {
       input: { customer_id: "cus_7" },
     });
   });
+
+  it("binds the delegation subject via pii_did when a subject DID is given", () => {
+    const call = buildKycCall(
+      RECORD,
+      "cus_7",
+      "did:t3n:6761170a932b75e9ba1f02659457e71ddcbb84f2"
+    ) as Record<string, unknown>;
+    expect(call.pii_did).toBe(
+      "did:t3n:6761170a932b75e9ba1f02659457e71ddcbb84f2"
+    );
+  });
+
+  it("omits pii_did when no subject is bound (SelfOnly call)", () => {
+    const call = buildKycCall(RECORD, "cus_7") as Record<string, unknown>;
+    expect(call.pii_did).toBeUndefined();
+  });
 });
 
 describe("buildPayCall", () => {
@@ -102,22 +118,58 @@ describe("buildPayCall", () => {
 });
 
 describe("PAY_BODY_TEMPLATE", () => {
-  it("mirrors the contract's marker-bearing pay body", () => {
+  it("mirrors the contract's pay egress: sealed beneficiary + email marker", () => {
     const serialized = JSON.stringify(PAY_BODY_TEMPLATE);
-    expect(serialized).toContain("{{profile.iban}}");
-    expect(serialized).toContain("{{profile.swift_bic}}");
-    expect(serialized).toContain("{{profile.legal_name}}");
+    expect(serialized).toContain("{{profile.verified_contacts.email.value}}");
+    expect(serialized).toContain("rail_beneficiary");
+    expect(serialized).toContain("sealed");
   });
 
-  it("never contains plaintext bank data", () => {
+  it("never contains plaintext bank data or bank markers", () => {
     const serialized = JSON.stringify(PAY_BODY_TEMPLATE);
     for (const plaintext of ["GB29", "NWBKGB2L", "Ada Bank"]) {
       expect(serialized).not.toContain(plaintext);
+    }
+    // Bank fields are NOT schema-backed profile fields (D1) — the template
+    // must not fake a profile marker for them.
+    for (const marker of ["{{profile.iban}}", "{{profile.swift_bic}}", "{{profile.legal_name}}"]) {
+      expect(serialized).not.toContain(marker);
     }
   });
 });
 
 describe("runDemoSteps", () => {
+  it("binds the subject DID on both executed calls when one is provided", async () => {
+    const agent: ExecuteClient = {
+      executeAndDecode: vi
+        .fn()
+        .mockResolvedValueOnce({
+          kyc_id: "kyc_1",
+          status: "verified",
+          risk_score: 12,
+        } as KycVerdict)
+        .mockResolvedValueOnce({
+          payment_id: "pay_1",
+          status: "settled",
+          iban_sha256: "9f2a…",
+        } as PayVerdict),
+    };
+    const subject = "did:t3n:6761170a932b75e9ba1f02659457e71ddcbb84f2";
+    await runDemoSteps(
+      agent,
+      RECORD,
+      { customerId: "cus_1", invoiceId: "inv_1", amount: "199.00" },
+      subject
+    );
+    const calls = (
+      agent.executeAndDecode as ReturnType<typeof vi.fn>
+    ).mock.calls.map((call) => call[0]);
+    expect(calls[0]).toEqual(buildKycCall(RECORD, "cus_1", subject));
+    expect(calls[1]).toEqual(
+      buildPayCall(RECORD, { invoiceId: "inv_1", amount: "199.00" }, subject)
+    );
+  });
+
   it("runs onboard-customer then pay-invoice and returns both verdicts", async () => {
     const kycVerdict: KycVerdict = {
       kyc_id: "kyc_1",
@@ -222,6 +274,24 @@ describe("fetchAuditEvents", () => {
     await expect(fetchAuditEvents(client, 10)).resolves.toMatchObject({
       ok: false,
     });
+  });
+
+  it("retries once on a transient throw right after a delegated execute", async () => {
+    const page = { batches: [], next_cursor: null };
+    const getAuditEvents = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error("Cannot read properties of undefined (reading 'status')")
+      )
+      .mockResolvedValueOnce(page);
+    const client = {
+      executeAndDecode: vi.fn(),
+      getAuditEvents,
+    } as Parameters<typeof fetchAuditEvents>[0];
+
+    const result = await fetchAuditEvents(client, 10);
+    expect(result).toEqual({ ok: true, raw: page });
+    expect(getAuditEvents).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -12,7 +12,7 @@
 /// Deliberately NO plain `http` import (every MANDATE call carries profile
 /// markers), NO outbox / clock / authorisation imports — the minimal
 /// capability surface that still delivers the full audit story.
-package z:mandate@0.1.0;
+package z:mandate@0.3.0;
 
 world mandate {
     import host:tenant/tenant-context@1.0.0;

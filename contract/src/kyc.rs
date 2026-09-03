@@ -6,9 +6,9 @@
 //!          inline PII (legal_name, iban, date_of_birth, ...) in the input is
 //!          rejected at parse time with `bad input: unknown field ...`. Only
 //!          an operational id (`customer_id`, e.g. "cus_1") may be supplied.
-//!   - OUT: the rail body carries MARKERS ONLY (`{{profile.legal_name}}`,
-//!          `{{profile.date_of_birth}}`) which the host's
-//!          http-with-placeholders resolves inside the enclave from the
+//!   - OUT: the rail body carries MARKERS ONLY (`{{profile.first_name}}`,
+//!          `{{profile.last_name}}`, `{{profile.date_of_birth}}`) which the
+//!          host's http-with-placeholders resolves inside the enclave from the
 //!          calling user's profile — plaintext PII never enters WASM memory,
 //!          and never crosses the WASM boundary outward.
 //!   - BACK: rail responses are parsed into the scrubbed `KycVerdict`
@@ -60,12 +60,16 @@ pub fn onboard_customer(input: &[u8]) -> Result<Vec<u8>, String> {
     }
 }
 
-/// Outbound rail body: markers ONLY for PII fields. `customer_id` is the
-/// operational id passed through from the request.
+/// Outbound rail body: markers ONLY for PII fields — the schema-backed person
+/// fields (first/last name, date of birth) that the enclave substitutes from
+/// the calling user's profile (D1 resolved 2026-09-03: legal_name/iban are NOT
+/// in the profile schema — see lib.rs marker-strategy note). `customer_id` is
+/// the operational id passed through from the request.
 fn build_kyc_body(req: &KycReq) -> serde_json::Value {
     serde_json::json!({
         "customer_id": req.customer_id,
-        "legal_name": crate::MARKER_LEGAL_NAME,
+        "first_name": crate::MARKER_FIRST_NAME,
+        "last_name": crate::MARKER_LAST_NAME,
         "date_of_birth": crate::MARKER_DATE_OF_BIRTH,
     })
 }
@@ -113,7 +117,7 @@ fn onboard_customer_wasm(req: KycReq) -> Result<KycVerdict, String> {
 
     let resp = hwp::call(&hwp::Request {
         method: hwp::Verb::Post,
-        url: format!("{}/kyc", crate::RAIL_BASE),
+        url: alloc::format!("{}/kyc", crate::rail_base()?),
         headers: Some(crate::rail_headers(&api_key)),
         payload: Some(serde_json::to_vec(&body).map_err(|e| e.to_string())?),
     })
@@ -190,17 +194,23 @@ mod tests {
         };
         let body = build_kyc_body(&req);
         assert_eq!(body["customer_id"], "cus_1");
-        assert_eq!(body["legal_name"], "{{profile.legal_name}}");
+        assert_eq!(body["first_name"], "{{profile.first_name}}");
+        assert_eq!(body["last_name"], "{{profile.last_name}}");
         assert_eq!(body["date_of_birth"], "{{profile.date_of_birth}}");
         let text = body.to_string();
         assert!(text.contains("{{profile."), "body must template markers");
         // KYC must never touch literal PII nor bank markers.
         assert!(!text.contains("Ada"), "no literal name allowed: {text}");
+        assert!(!text.contains("Bank"), "no literal name allowed: {text}");
         assert!(!text.contains("1990-01-15"), "no literal dob allowed: {text}");
         assert!(!text.contains("GB29"), "no literal iban allowed: {text}");
         assert!(
             !text.contains("{{profile.iban}}"),
             "KYC must never carry bank markers: {text}"
+        );
+        assert!(
+            !text.contains("{{profile.legal_name}}"),
+            "legal_name is not a schema-backed profile field (D1): {text}"
         );
     }
 

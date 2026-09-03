@@ -3,14 +3,18 @@
 # demo.sh — deterministic Beats 0-5 demo runner (MANDATE: Terminal 3 / T3N ADK bounty).
 #
 # THE PRIVACY STORY — one request, two views:
-#   The agent never sees the customer's real bank details. Its call payloads and
-#   host/agent-output.log carry TEMPLATE MARKERS ({{profile.iban}}) plus a sha256
-#   receipt proof (iban_sha256). The enclave resolves the markers, and the mock
+#   The agent never sees the customer's real bank details. Its call payloads
+#   and host/agent-output.log carry TEMPLATE MARKERS
+#   ({{profile.verified_contacts.email.value}}) plus a sha256 receipt proof
+#   (iban_sha256); the beneficiary bank config itself is SEALED — the contract
+#   reads it from z:<tid>:secrets inside the enclave (Decision D1: the profile
+#   schema cannot carry bank fields — live-verified 2026-09-03). The mock
 #   counterparty rail records the REAL resolved values in mock-rail/rail.log.
-#   This runner validates that the two views line up — marker on the agent side,
-#   real IBAN on the rail side, digests matching — WITHOUT hardcoding the IBAN
-#   in this file (it is extracted from rail.log at runtime and compared against
-#   the agent log's iban_sha256, so scripts/ stays free of plaintext).
+#   This runner validates that the two views line up — marker on the agent
+#   side, real IBAN on the rail side, digests matching — WITHOUT hardcoding
+#   the IBAN in this file (it is extracted from rail.log at runtime and
+#   compared against the agent log's iban_sha256, so scripts/ stays free of
+#   plaintext).
 #
 # USAGE:
 #   bash scripts/demo.sh             # live demo — needs the mock rail running,
@@ -22,10 +26,12 @@
 # BEATS (Appendix B):
 #   BEAT 0  BEFORE  — repo carries no plaintext IBAN; rail /health; state files present
 #   BEAT 1  KYC     — onboard cus_1: agent log shows markers; rail gets the real record
-#   BEAT 2  PAY     — MAGIC MOMENT: {{profile.iban}} on the agent side, real IBAN on
-#                     the rail side; sha256(IBAN) == agent log's iban_sha256
+#   BEAT 2  PAY     — MAGIC MOMENT: marker + sealed-config on the agent side,
+#                     real IBAN on the rail side; sha256(IBAN) == agent log's
+#                     iban_sha256
 #   BEAT 3  REVOKE  — grant.ts revoke: delegation emptied
-#   BEAT 4  DENIED  — pay again: egress denied, rail.log line count unchanged
+#   BEAT 4  DENIED  — pay again: refused (delegation gone — the node returns
+#                     Forbidden agent_auth_not_found), rail.log unchanged
 #   BEAT 5  AFTER   — repo plaintext invariant holds again + summary
 #
 set -euo pipefail
@@ -108,12 +114,13 @@ beat2() {
   else
     PAY_OUT=$(cd "$HOST_DIR" && npx tsx src/run-demo.ts pay --invoice inv_1 --amount 199.00 2>&1)
   fi
-  run e2e_assert_file_contains "$AGENT_LOG" '{{profile.iban}}' 'agent-view line logs the template marker, never the value'
+  run e2e_assert_file_contains "$AGENT_LOG" '{{profile.verified_contacts.email.value}}' 'agent-view line logs the schema-backed marker, never the value'
+  run e2e_assert_file_contains "$AGENT_LOG" 'rail_beneficiary' 'agent-view names the sealed beneficiary source, never its values'
   run e2e_assert_file_not_contains "$AGENT_LOG" 'GB29 NWBK' 'agent view carries no resolvable IBAN fragment'
   if [[ "${DEMO_DRY:-}" == "1" ]]; then
     printf '[dry] rail assertions skipped\n'
-    echo '  AGENT view (agent-output.log): iban:"{{profile.iban}}", iban_sha256:<64-hex proof>'
-    echo '  RAIL  view (rail.log):         iban:"<real value, resolved by the enclave>"'
+    echo '  AGENT view (agent-output.log): customer_email:"{{profile.verified_contacts.email.value}}", iban_sha256:<64-hex proof>'
+    echo '  RAIL  view (rail.log):         beneficiary iban:"<real value, resolved inside the enclave from the sealed rail_beneficiary secret>"'
   else
     run e2e_assert_file_line_count "$RAIL_LOG" "$((RAIL_BEFORE + 1))" 'rail log grew by exactly one /pay line'
     run e2e_assert_last_line_contains "$RAIL_LOG" '"/pay"' 'newest rail line is the /pay egress'
@@ -122,14 +129,13 @@ beat2() {
     run e2e_assert_sha256_matches "$IBAN" "$AGENT_SHA" 'iban_sha256 proof matches the IBAN the rail received'
     run e2e_assert_sha256_matches "$IBAN" "$(printf %s "$IBAN" | sha256sum | cut -d' ' -f1)" 'self-consistent sha256(IBAN) digest'
     echo
-    echo '  ------ MAGIC MOMENT: one request, two views ------'
-    echo "  AGENT view (agent-output.log): iban:\"{{profile.iban}}\""
-    echo "  AGENT view (agent-output.log): iban_sha256:\"$AGENT_SHA\""
-    echo "  RAIL  view (rail.log):         iban:\"$IBAN\""
+    echo '  ------ MAGIC MOMENT: one payment, two views ------'
+    echo "  AGENT view (agent-output.log): customer_email marker + iban_sha256:\"$AGENT_SHA\""
+    echo "  RAIL  view (rail.log):         iban:\"$IBAN\" (sealed config, resolved inside the enclave)"
     echo '  --------------------------------------------------'
-    echo '  Same request. The secret moved without touching the mover.'
+    echo '  The agent moved the money without ever touching the bank details.'
   fi
-  echo 'SCREENSHOT FRAME (magic moment): split view — left, agent-output.log with {{profile.iban}} + iban_sha256 proof; right, rail.log with the real IBAN'
+  echo 'SCREENSHOT FRAME (magic moment): split view — left, agent-output.log with the {{profile.verified_contacts.email.value}} marker + iban_sha256 proof; right, rail.log with the real beneficiary IBAN from the sealed config'
 }
 
 beat3() {
@@ -159,19 +165,24 @@ beat4() {
     RC=$?
     set -e
     if [[ $RC -eq 0 ]]; then
-      echo 'FAIL: expected egress denial after revoke, but pay exited 0'
+      echo 'FAIL: expected denial after revoke, but pay exited 0'
       printf '%s\n' "$PAY_OUT"
       exit 1
     fi
-    if [[ "$PAY_OUT" != *'egress denied'* ]]; then
-      echo "FAIL: denial output missing 'egress denied'"
+    # LIVE-VERIFIED denial (2026-09-03): with the delegation revoked the node
+    # refuses the delegated call outright — "Forbidden (agent_auth_not_found):
+    # ... not permitted to act on behalf of ...". (The platform-level
+    # "egress denied for host ..." string appears when a grant exists but the
+    # host is not allowlisted — see scripts/demo.sh notes.) Accept either.
+    if [[ "$PAY_OUT" != *'egress denied'* && "$PAY_OUT" != *'not permitted to act on behalf'* ]]; then
+      echo "FAIL: denial output missing a denial marker ('egress denied' / 'not permitted to act on behalf')"
       printf '%s\n' "$PAY_OUT"
       exit 1
     fi
-    echo 'PASS: pay denied — egress blocked after revoke'
+    echo 'PASS: pay denied — delegation revoked (agent_auth_not_found)'
     e2e_assert_file_line_count "$RAIL_LOG" "$RAIL_BEFORE" 'denied call never reaches the rail'
   fi
-  echo 'SCREENSHOT FRAME: revocation denial — terminal shows "egress denied"; rail.log tail unchanged (same line count)'
+  echo 'SCREENSHOT FRAME: revocation denial — terminal shows the Forbidden denial (agent_auth_not_found / not permitted to act on behalf); rail.log tail unchanged (same line count)'
 }
 
 beat5() {

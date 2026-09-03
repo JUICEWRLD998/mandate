@@ -315,7 +315,7 @@ e2e_assert_repo_no_plaintext_iban() {
         fi
     done < <(find "$root" \
         \( -name .git -o -name node_modules -o -name target -o -name .hermes \
-           -o -name docs -o -name tests -o -name fixtures \) -prune -o \
+           -o -name docs -o -name tests -o -name fixtures -o -name .env \) -prune -o \
         -type f ! -name '*.log' ! -name '*.wasm' ! -name '*.md' ! -name '*.lock' \
                ! -name 'package-lock.json' -print)
 
